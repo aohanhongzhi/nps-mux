@@ -584,6 +584,9 @@ func (c *bufChain) popTail() (unsafe.Pointer, bool) {
 			// dequeue and so popHead doesn't back up
 			// further than necessary.
 			storePoolChainElt(&d2.prev, nil)
+		} else {
+			// 引入短暂的休眠，减少自旋锁行为
+			time.Sleep(100 * time.Microsecond)
 		}
 		d = d2
 	}
