@@ -222,6 +222,7 @@ func (s *Mux) ping() {
 
 func (s *Mux) readSession() {
 	go func() {
+		defer PanicHandler()
 		var connection *conn
 		for {
 			if s.IsClose {
@@ -232,8 +233,20 @@ func (s *Mux) readSession() {
 				break // make sure that is closed
 			}
 			s.connMap.Set(connection.connId, connection) //it has been Set before send ok
-			s.newConnCh <- connection
-			s.sendInfo(muxNewConnOk, connection.connId, nil)
+			if true {
+				// 使用 select 语句来检查通道是否已经关闭
+				select {
+				case s.newConnCh <- connection:
+					s.sendInfo(muxNewConnOk, connection.connId, nil)
+				default:
+					// 如果通道已经关闭，这里会进入 default 分支
+					time.Sleep(10 * time.Millisecond)
+					break
+				}
+			} else {
+				s.newConnCh <- connection
+				s.sendInfo(muxNewConnOk, connection.connId, nil)
+			}
 		}
 	}()
 	go func() {
