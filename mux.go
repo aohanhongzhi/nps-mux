@@ -139,6 +139,7 @@ func (s *Mux) sendInfo(flag uint8, id int32, data interface{}) {
 
 func (s *Mux) writeSession() {
 	go func() {
+		defer PanicHandler()
 		for {
 			if s.IsClose {
 				break
@@ -167,6 +168,7 @@ func (s *Mux) writeSession() {
 
 func (s *Mux) ping() {
 	go func() {
+		defer PanicHandler()
 		now, _ := time.Now().UTC().MarshalText()
 		s.sendInfo(muxPingFlag, muxPing, now)
 		// send the ping flag and Get the latency first
@@ -194,6 +196,7 @@ func (s *Mux) ping() {
 	}()
 
 	go func() {
+		defer PanicHandler()
 		var now time.Time
 		var data []byte
 		for {
@@ -250,6 +253,7 @@ func (s *Mux) readSession() {
 		}
 	}()
 	go func() {
+		defer PanicHandler()
 		var pack *muxPackager
 		var l uint16
 		var err error
@@ -348,6 +352,7 @@ func (s *Mux) Close() (err error) {
 	// and tcp status change to CLOSE WAIT or TIME WAIT, so we close it in other goroutine
 	_ = s.conn.SetDeadline(time.Now().Add(time.Second * 5))
 	go func() {
+		defer PanicHandler()
 		s.conn.Close()
 		s.bw.Close()
 	}()
