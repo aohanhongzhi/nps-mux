@@ -586,7 +586,13 @@ func (c *bufChain) popTail() (unsafe.Pointer, bool) {
 			storePoolChainElt(&d2.prev, nil)
 		} else {
 			// 引入短暂的休眠，减少自旋锁行为
-			time.Sleep(100 * time.Microsecond)
+			// 动态调整休眠时间以避免过度自旋
+			for i := 0; i < 5; i++ {
+				time.Sleep(time.Duration(i) * 100 * time.Microsecond)
+				if atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&c.tail))) == unsafe.Pointer(d2) {
+					break
+				}
+			}
 		}
 		d = d2
 	}
