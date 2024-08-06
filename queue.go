@@ -270,12 +270,19 @@ startPop:
 		goto startPop // wait finish, trying to Get the New status
 	}
 	// length is not zero, so try to pop
+	i := 0
 	for {
 		element = Self.TryPop()
 		if element != nil {
 			return
 		}
-		runtime.Gosched() // another goroutine is still pushing
+		if i%1000 == 0 {
+			runtime.Gosched() // another goroutine is still pushing
+		} else {
+			// 引入适当的休眠来减少CPU消耗
+			time.Sleep(10 * time.Microsecond) // 休眠 10 微秒
+		}
+		i++
 	}
 }
 
