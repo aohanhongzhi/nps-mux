@@ -47,6 +47,7 @@ type Mux struct {
 }
 
 func NewMux(c net.Conn, connType string, pingCheckThreshold int) *Mux {
+	defer PanicHandler()
 	//c.(*net.TCPConn).SetReadBuffer(0)
 	//c.(*net.TCPConn).SetWriteBuffer(0)
 	fd, err := getConnFd(c)
@@ -87,6 +88,7 @@ func NewMux(c net.Conn, connType string, pingCheckThreshold int) *Mux {
 }
 
 func (s *Mux) NewConn() (*conn, error) {
+	defer PanicHandler()
 	if s.IsClose {
 		return nil, errors.New("the mux has closed")
 	}
@@ -106,6 +108,7 @@ func (s *Mux) NewConn() (*conn, error) {
 }
 
 func (s *Mux) Accept() (net.Conn, error) {
+	defer PanicHandler()
 	if s.IsClose {
 		return nil, errors.New("accpet error,the mux has closed")
 	}
@@ -117,10 +120,12 @@ func (s *Mux) Accept() (net.Conn, error) {
 }
 
 func (s *Mux) Addr() net.Addr {
+	defer PanicHandler()
 	return s.conn.LocalAddr()
 }
 
 func (s *Mux) sendInfo(flag uint8, id int32, data interface{}) {
+	defer PanicHandler()
 	if s.IsClose {
 		return
 	}
@@ -138,6 +143,7 @@ func (s *Mux) sendInfo(flag uint8, id int32, data interface{}) {
 }
 
 func (s *Mux) writeSession() {
+	defer PanicHandler()
 	go func() {
 		defer PanicHandler()
 		for {
@@ -167,6 +173,7 @@ func (s *Mux) writeSession() {
 }
 
 func (s *Mux) ping() {
+	defer PanicHandler()
 	go func() {
 		defer PanicHandler()
 		now, _ := time.Now().UTC().MarshalText()
@@ -224,6 +231,7 @@ func (s *Mux) ping() {
 }
 
 func (s *Mux) readSession() {
+	defer PanicHandler()
 	go func() {
 		defer PanicHandler()
 		var connection *conn
@@ -324,6 +332,7 @@ func (s *Mux) readSession() {
 }
 
 func (s *Mux) newMsg(connection *conn, pack *muxPackager) (err error) {
+	defer PanicHandler()
 	if connection.isClose {
 		err = io.ErrClosedPipe
 		return
@@ -339,6 +348,7 @@ func (s *Mux) newMsg(connection *conn, pack *muxPackager) (err error) {
 }
 
 func (s *Mux) Close() (err error) {
+	defer PanicHandler()
 	if s.IsClose {
 		return errors.New("the mux has closed")
 	}
@@ -361,6 +371,7 @@ func (s *Mux) Close() (err error) {
 }
 
 func (s *Mux) release() {
+	defer PanicHandler()
 	for {
 		pack := s.writeQueue.TryPop()
 		if pack == nil {
@@ -384,6 +395,7 @@ func (s *Mux) release() {
 
 // Get New connId as unique flag
 func (s *Mux) getId() (id int32) {
+	defer PanicHandler()
 	//Avoid going beyond the scope
 	if (math.MaxInt32 - s.id) < 10000 {
 		atomic.StoreInt32(&s.id, 0)
@@ -405,10 +417,12 @@ type bandwidth struct {
 }
 
 func NewBandwidth(fd *os.File) *bandwidth {
+	defer PanicHandler()
 	return &bandwidth{fd: fd}
 }
 
 func (Self *bandwidth) StartRead() {
+	defer PanicHandler()
 	if Self.readStart.IsZero() {
 		Self.readStart = time.Now()
 	}
@@ -419,10 +433,12 @@ func (Self *bandwidth) StartRead() {
 }
 
 func (Self *bandwidth) SetCopySize(n uint16) {
+	defer PanicHandler()
 	Self.bufLength += uint32(n)
 }
 
 func (Self *bandwidth) calcBandWidth() {
+	defer PanicHandler()
 	t := Self.readStart.Sub(Self.lastReadStart)
 	bufferSize, err := sysGetSock(Self.fd)
 	if err != nil {
@@ -441,6 +457,7 @@ func (Self *bandwidth) calcBandWidth() {
 }
 
 func (Self *bandwidth) Get() (bw float64) {
+	defer PanicHandler()
 	// The zero value, 0 for numeric types
 	bw = math.Float64frombits(atomic.LoadUint64(&Self.readBandwidth))
 	if bw <= 0 {
@@ -450,6 +467,7 @@ func (Self *bandwidth) Get() (bw float64) {
 }
 
 func (Self *bandwidth) Close() error {
+	defer PanicHandler()
 	return Self.fd.Close()
 }
 

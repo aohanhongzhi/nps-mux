@@ -21,6 +21,7 @@ type priorityQueue struct {
 }
 
 func (Self *priorityQueue) New() {
+	defer PanicHandler()
 	Self.highestChain = new(bufChain)
 	Self.highestChain.new(4)
 	Self.middleChain = new(bufChain)
@@ -32,12 +33,14 @@ func (Self *priorityQueue) New() {
 }
 
 func (Self *priorityQueue) Push(packager *muxPackager) {
+	defer PanicHandler()
 	Self.push(packager)
 	Self.cond.Broadcast()
 	return
 }
 
 func (Self *priorityQueue) push(packager *muxPackager) {
+	defer PanicHandler()
 	switch packager.flag {
 	case muxPingFlag, muxPingReturn:
 		Self.highestChain.pushHead(unsafe.Pointer(packager))
@@ -54,6 +57,7 @@ func (Self *priorityQueue) push(packager *muxPackager) {
 const maxStarving uint8 = 8
 
 func (Self *priorityQueue) Pop() (packager *muxPackager) {
+	defer PanicHandler()
 	var iter bool
 	for {
 		packager = Self.TryPop()
@@ -84,6 +88,7 @@ func (Self *priorityQueue) Pop() (packager *muxPackager) {
 }
 
 func (Self *priorityQueue) TryPop() (packager *muxPackager) {
+	defer PanicHandler()
 	ptr, ok := Self.highestChain.popTail()
 	if ok {
 		packager = (*muxPackager)(ptr)
@@ -118,6 +123,7 @@ func (Self *priorityQueue) TryPop() (packager *muxPackager) {
 }
 
 func (Self *priorityQueue) Stop() {
+	defer PanicHandler()
 	Self.stop = true
 	Self.cond.Broadcast()
 }
@@ -130,6 +136,7 @@ type connQueue struct {
 }
 
 func (Self *connQueue) New() {
+	defer PanicHandler()
 	Self.chain = new(bufChain)
 	Self.chain.new(32)
 	locker := new(sync.Mutex)
@@ -137,12 +144,14 @@ func (Self *connQueue) New() {
 }
 
 func (Self *connQueue) Push(connection *conn) {
+	defer PanicHandler()
 	Self.chain.pushHead(unsafe.Pointer(connection))
 	Self.cond.Broadcast()
 	return
 }
 
 func (Self *connQueue) Pop() (connection *conn) {
+	defer PanicHandler()
 	var iter bool
 	for {
 		connection = Self.TryPop()
@@ -173,6 +182,7 @@ func (Self *connQueue) Pop() (connection *conn) {
 }
 
 func (Self *connQueue) TryPop() (connection *conn) {
+	defer PanicHandler()
 	ptr, ok := Self.chain.popTail()
 	if ok {
 		connection = (*conn)(ptr)
@@ -182,6 +192,7 @@ func (Self *connQueue) TryPop() (connection *conn) {
 }
 
 func (Self *connQueue) Stop() {
+	defer PanicHandler()
 	Self.stop = true
 	Self.cond.Broadcast()
 }
@@ -193,12 +204,14 @@ type listElement struct {
 }
 
 func (Self *listElement) Reset() {
+	defer PanicHandler()
 	Self.L = 0
 	Self.Buf = nil
 	Self.Part = false
 }
 
 func newListElement(buf []byte, l uint16, part bool) (element *listElement, err error) {
+	defer PanicHandler()
 	if uint16(len(buf)) != l {
 		err = errors.New("listElement: buf length not match")
 		return
@@ -226,6 +239,7 @@ type receiveWindowQueue struct {
 }
 
 func newReceiveWindowQueue() *receiveWindowQueue {
+	defer PanicHandler()
 	queue := receiveWindowQueue{
 		chain:  new(bufChain),
 		stopOp: make(chan struct{}, 2),
@@ -236,6 +250,7 @@ func newReceiveWindowQueue() *receiveWindowQueue {
 }
 
 func (Self *receiveWindowQueue) Push(element *listElement) {
+	defer PanicHandler()
 	var length, wait uint32
 	for {
 		ptrs := atomic.LoadUint64(&Self.lengthWait)
@@ -254,6 +269,7 @@ func (Self *receiveWindowQueue) Push(element *listElement) {
 }
 
 func (Self *receiveWindowQueue) Pop() (element *listElement, err error) {
+	defer PanicHandler()
 	var length uint32
 startPop:
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
@@ -287,6 +303,7 @@ startPop:
 }
 
 func (Self *receiveWindowQueue) TryPop() (element *listElement) {
+	defer PanicHandler()
 	ptr, ok := Self.chain.popTail()
 	if ok {
 		element = (*listElement)(ptr)
@@ -297,6 +314,7 @@ func (Self *receiveWindowQueue) TryPop() (element *listElement) {
 }
 
 func (Self *receiveWindowQueue) allowPop() (closed bool) {
+	defer PanicHandler()
 	select {
 	case Self.readOp <- struct{}{}:
 		return false
@@ -306,6 +324,7 @@ func (Self *receiveWindowQueue) allowPop() (closed bool) {
 }
 
 func (Self *receiveWindowQueue) waitPush() (err error) {
+	defer PanicHandler()
 	t := Self.timeout.Sub(time.Now())
 	if t <= 0 {
 		// not Set the timeout, so wait for it without timeout, just like a tcp connection
@@ -332,6 +351,7 @@ func (Self *receiveWindowQueue) waitPush() (err error) {
 }
 
 func (Self *receiveWindowQueue) Len() (n uint32) {
+	defer PanicHandler()
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
 	n, _ = Self.chain.head.unpack(ptrs)
 	// just for unpack method use
@@ -339,11 +359,13 @@ func (Self *receiveWindowQueue) Len() (n uint32) {
 }
 
 func (Self *receiveWindowQueue) Stop() {
+	defer PanicHandler()
 	Self.stopOp <- struct{}{}
 	Self.stopOp <- struct{}{}
 }
 
 func (Self *receiveWindowQueue) SetTimeOut(t time.Time) {
+	defer PanicHandler()
 	Self.timeout = t
 }
 

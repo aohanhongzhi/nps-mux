@@ -15,6 +15,7 @@ type Rate struct {
 }
 
 func NewRate(addSize int64) *Rate {
+	defer PanicHandler()
 	return &Rate{
 		bucketSize:        addSize * 2,
 		bucketSurplusSize: 0,
@@ -24,6 +25,7 @@ func NewRate(addSize int64) *Rate {
 }
 
 func (s *Rate) Start() {
+	defer PanicHandler()
 	go s.session()
 }
 
@@ -35,17 +37,20 @@ func (s *Rate) add(size int64) {
 	atomic.AddInt64(&s.bucketSurplusSize, size)
 }
 
-//回桶
+// 回桶
 func (s *Rate) ReturnBucket(size int64) {
+	defer PanicHandler()
 	s.add(size)
 }
 
-//停止
+// 停止
 func (s *Rate) Stop() {
+	defer PanicHandler()
 	s.stopChan <- true
 }
 
 func (s *Rate) Get(size int64) {
+	defer PanicHandler()
 	if s.bucketSurplusSize >= size {
 		atomic.AddInt64(&s.bucketSurplusSize, -size)
 		return
@@ -64,6 +69,7 @@ func (s *Rate) Get(size int64) {
 }
 
 func (s *Rate) session() {
+	defer PanicHandler()
 	ticker := time.NewTicker(time.Second * 1)
 	for {
 		select {
@@ -87,6 +93,7 @@ type Conn struct {
 }
 
 func NewRateConn(rate *Rate, conn net.Conn) *Conn {
+	defer PanicHandler()
 	return &Conn{
 		conn: conn,
 		rate: rate,
@@ -94,6 +101,7 @@ func NewRateConn(rate *Rate, conn net.Conn) *Conn {
 }
 
 func (conn *Conn) Read(b []byte) (n int, err error) {
+	defer PanicHandler()
 	defer func() {
 		conn.rate.Get(int64(n))
 	}()
@@ -101,6 +109,7 @@ func (conn *Conn) Read(b []byte) (n int, err error) {
 }
 
 func (conn *Conn) Write(b []byte) (n int, err error) {
+	defer PanicHandler()
 	defer func() {
 		conn.rate.Get(int64(n))
 	}()
@@ -108,25 +117,31 @@ func (conn *Conn) Write(b []byte) (n int, err error) {
 }
 
 func (conn *Conn) LocalAddr() net.Addr {
+	defer PanicHandler()
 	return conn.conn.LocalAddr()
 }
 
 func (conn *Conn) RemoteAddr() net.Addr {
+	defer PanicHandler()
 	return conn.conn.RemoteAddr()
 }
 
 func (conn *Conn) SetDeadline(t time.Time) error {
+	defer PanicHandler()
 	return conn.conn.SetDeadline(t)
 }
 
 func (conn *Conn) SetWriteDeadline(t time.Time) error {
+	defer PanicHandler()
 	return conn.conn.SetWriteDeadline(t)
 }
 
 func (conn *Conn) SetReadDeadline(t time.Time) error {
+	defer PanicHandler()
 	return conn.conn.SetReadDeadline(t)
 }
 
 func (conn *Conn) Close() error {
+	defer PanicHandler()
 	return conn.conn.Close()
 }

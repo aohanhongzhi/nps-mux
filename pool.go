@@ -14,6 +14,7 @@ type windowBufferPool struct {
 }
 
 func newWindowBufferPool() *windowBufferPool {
+	defer PanicHandler()
 	return &windowBufferPool{
 		pool: sync.Pool{
 			New: func() interface{} {
@@ -34,12 +35,14 @@ func newWindowBufferPool() *windowBufferPool {
 //}
 
 func (Self *windowBufferPool) Get() (buf []byte) {
+	defer PanicHandler()
 	buf = Self.pool.Get().([]byte)
 	//trace(buf, "get")
 	return buf[:poolSizeWindow]
 }
 
 func (Self *windowBufferPool) Put(x []byte) {
+	defer PanicHandler()
 	//trace(x, "put")
 	Self.pool.Put(x[:poolSizeWindow]) // make buf to full
 }
@@ -49,6 +52,7 @@ type muxPackagerPool struct {
 }
 
 func newMuxPackagerPool() *muxPackagerPool {
+	defer PanicHandler()
 	return &muxPackagerPool{
 		pool: sync.Pool{
 			New: func() interface{} {
@@ -60,10 +64,11 @@ func newMuxPackagerPool() *muxPackagerPool {
 }
 
 func (Self *muxPackagerPool) Get() *muxPackager {
+	defer PanicHandler()
 	return Self.pool.Get().(*muxPackager)
 }
-
 func (Self *muxPackagerPool) Put(pack *muxPackager) {
+	defer PanicHandler()
 	pack.reset()
 	Self.pool.Put(pack)
 }
@@ -73,6 +78,7 @@ type listElementPool struct {
 }
 
 func newListElementPool() *listElementPool {
+	defer PanicHandler()
 	return &listElementPool{
 		pool: sync.Pool{
 			New: func() interface{} {
@@ -84,10 +90,12 @@ func newListElementPool() *listElementPool {
 }
 
 func (Self *listElementPool) Get() *listElement {
+	defer PanicHandler()
 	return Self.pool.Get().(*listElement)
 }
 
 func (Self *listElementPool) Put(element *listElement) {
+	defer PanicHandler()
 	element.Reset()
 	Self.pool.Put(element)
 }
