@@ -33,3 +33,10 @@ You can use Read Write method to transfer your own data
 
 # More
 See [mux_test.go](https://github.com/ehang-io/nps-mux/blob/master/mux_test.go)
+
+# 发布
+
+```shell
+git tag v0.0.6
+git push --tags 
+```
