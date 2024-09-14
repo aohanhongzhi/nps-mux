@@ -544,9 +544,16 @@ func (c *bufChain) new(initSize int) {
 
 func (c *bufChain) pushHead(val unsafe.Pointer) {
 startPush:
+	i := 0
 	for {
 		if atomic.LoadUint32(&c.newChain) > 0 {
-			runtime.Gosched()
+			if i%1000 == 0 {
+				runtime.Gosched() // another goroutine is still pushing
+			} else {
+				// 引入适当的休眠来减少CPU消耗
+				time.Sleep(10 * time.Microsecond) // 休眠 10 微秒
+			}
+			i++
 		} else {
 			break
 		}
