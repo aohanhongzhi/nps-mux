@@ -64,6 +64,10 @@ func (s *Rate) Get(size int64) {
 				ticker.Stop()
 				return
 			}
+		default:
+			// 如果通道已经关闭，这里会进入 default 分支
+			time.Sleep(10 * time.Microsecond)
+			break
 		}
 	}
 }

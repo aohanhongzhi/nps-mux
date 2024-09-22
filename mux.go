@@ -187,6 +187,11 @@ func (s *Mux) ping() {
 			}
 			select {
 			case <-ticker.C:
+				time.Sleep(2 * time.Microsecond)
+			default:
+				// 如果通道已经关闭，这里会进入 default 分支
+				time.Sleep(10 * time.Microsecond)
+				break
 			}
 			if atomic.LoadUint32(&s.pingCheckTime) > s.pingCheckThreshold {
 				log.Println("mux: ping time out, checktime", s.pingCheckTime, "threshold", s.pingCheckThreshold)
