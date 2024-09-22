@@ -59,6 +59,7 @@ const maxStarving uint8 = 8
 func (Self *priorityQueue) Pop() (packager *muxPackager) {
 	defer PanicHandler()
 	var iter bool
+	i := 0
 	for {
 		packager = Self.TryPop()
 		if packager != nil {
@@ -72,7 +73,13 @@ func (Self *priorityQueue) Pop() (packager *muxPackager) {
 			// trying to pop twice
 		}
 		iter = true
-		runtime.Gosched()
+		if i%1000 == 0 {
+			runtime.Gosched() // another goroutine is still pushing
+		} else {
+			// 引入适当的休眠来减少CPU消耗
+			time.Sleep(10 * time.Microsecond) // 休眠 10 微秒
+		}
+		i++
 	}
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
@@ -153,6 +160,7 @@ func (Self *connQueue) Push(connection *conn) {
 func (Self *connQueue) Pop() (connection *conn) {
 	defer PanicHandler()
 	var iter bool
+	i := 0
 	for {
 		connection = Self.TryPop()
 		if connection != nil {
@@ -166,7 +174,13 @@ func (Self *connQueue) Pop() (connection *conn) {
 			// trying to pop twice
 		}
 		iter = true
-		runtime.Gosched()
+		if i%1000 == 0 {
+			runtime.Gosched() // another goroutine is still pushing
+		} else {
+			// 引入适当的休眠来减少CPU消耗
+			time.Sleep(10 * time.Microsecond) // 休眠 10 微秒
+		}
+		i++
 	}
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
