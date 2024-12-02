@@ -77,7 +77,14 @@ func (Self *priorityQueue) Pop() (packager *muxPackager) {
 			runtime.Gosched() // another goroutine is still pushing
 		} else {
 			// 引入适当的休眠来减少CPU消耗
-			time.Sleep(10 * time.Microsecond) // 休眠 10 微秒
+			// 指数退避策略减少 CPU 消耗
+			if i < 100 {
+				time.Sleep(10 * time.Microsecond)
+			} else if i < 1000 {
+				time.Sleep(100 * time.Microsecond)
+			} else {
+				time.Sleep(1 * time.Millisecond)
+			}
 		}
 		i++
 	}

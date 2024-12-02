@@ -146,6 +146,8 @@ func (s *Mux) writeSession() {
 	defer PanicHandler()
 	go func() {
 		defer PanicHandler()
+
+		// 具备一直执行的条件，会死循环导致CPU暴增
 		for {
 			if s.IsClose {
 				break
@@ -251,7 +253,7 @@ func (s *Mux) readSession() {
 					s.sendInfo(muxNewConnOk, connection.connId, nil)
 				default:
 					// 如果通道已经关闭，这里会进入 default 分支
-					time.Sleep(10 * time.Millisecond)
+					s.IsClose = true
 					break
 				}
 			} else {
