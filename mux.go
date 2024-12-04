@@ -216,7 +216,7 @@ func (s *Mux) ping() {
 			case data = <-s.pingCh:
 				atomic.StoreUint32(&s.pingCheckTime, 0)
 			case <-s.closeChan:
-				s.IsClose = true
+				s.Close()
 				break
 				//default:
 				//	log.Println("mux: ping timeout")
