@@ -218,8 +218,8 @@ func (s *Mux) ping() {
 			case <-s.closeChan:
 				s.IsClose = true
 				break
-			default:
-				log.Println("mux: ping timeout")
+				//default:
+				//	log.Println("mux: ping timeout")
 			}
 			_ = now.UnmarshalText(data)
 			latency := time.Now().UTC().Sub(now).Seconds()
@@ -325,7 +325,7 @@ func (s *Mux) readSession() {
 					continue
 				case muxConnClose: //close the connection
 					connection.closingFlag = true
-					s.IsClose = true
+					//s.IsClose = true
 					connection.receiveWindow.Stop() // close signal to receive window
 					continue
 				default:
