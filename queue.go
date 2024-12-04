@@ -257,6 +257,7 @@ type receiveWindowQueue struct {
 
 	// if there are implicit struct, careful the first word
 	timeout time.Time
+	sync.RWMutex
 }
 
 func newReceiveWindowQueue() *receiveWindowQueue {
@@ -291,6 +292,10 @@ func (Self *receiveWindowQueue) Push(element *listElement) {
 
 func (Self *receiveWindowQueue) Pop() (element *listElement, err error) {
 	defer PanicHandler()
+
+	// 不加锁的话，这个地方可能会出现并发问题，其他协程处理了数据，导致这里出现for死循环
+	Self.Lock()
+	defer Self.Unlock()
 	var length uint32
 startPop:
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
@@ -311,8 +316,10 @@ startPop:
 	for {
 		element = Self.TryPop()
 		if element != nil {
+
 			return
 		}
+		// TODO 这里循序必须有一个停止条件！ 上面加锁了，保证死循环不会发生
 		if i%1000 == 0 {
 			runtime.Gosched() // another goroutine is still pushing
 		} else {
