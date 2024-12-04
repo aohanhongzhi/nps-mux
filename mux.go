@@ -236,6 +236,7 @@ func (s *Mux) readSession() {
 	go func() {
 		defer PanicHandler()
 		var connection *conn
+		defer close(s.newConnCh)
 		for {
 			if s.IsClose {
 				break
@@ -378,7 +379,7 @@ func (s *Mux) release() {
 	s.newConnQueue.Stop()
 }
 
-//Get New connId as unique flag
+// Get New connId as unique flag
 func (s *Mux) getId() (id int32) {
 	defer PanicHandler()
 	//Avoid going beyond the scope
