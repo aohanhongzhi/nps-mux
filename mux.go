@@ -216,7 +216,10 @@ func (s *Mux) ping() {
 			case data = <-s.pingCh:
 				atomic.StoreUint32(&s.pingCheckTime, 0)
 			case <-s.closeChan:
+				s.IsClose = true
 				break
+			default:
+				log.Println("mux: ping timeout")
 			}
 			_ = now.UnmarshalText(data)
 			latency := time.Now().UTC().Sub(now).Seconds()
@@ -253,7 +256,7 @@ func (s *Mux) readSession() {
 					s.sendInfo(muxNewConnOk, connection.connId, nil)
 				default:
 					// 如果通道已经关闭，这里会进入 default 分支
-					s.IsClose = true
+					_ = s.Close()
 					break
 				}
 			} else {
@@ -322,8 +325,11 @@ func (s *Mux) readSession() {
 					continue
 				case muxConnClose: //close the connection
 					connection.closingFlag = true
+					s.IsClose = true
 					connection.receiveWindow.Stop() // close signal to receive window
 					continue
+				default:
+					log.Println(pack.flag)
 				}
 			} else if pack.flag == muxConnClose {
 				continue
