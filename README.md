@@ -40,3 +40,9 @@ See [mux_test.go](https://github.com/ehang-io/nps-mux/blob/master/mux_test.go)
 git tag v0.0.6
 git push --tags 
 ```
+
+# 调试
+
+```shell
+replace ehang.io/nps-mux => /home/eric/Project/Go/nps-mux
+```
