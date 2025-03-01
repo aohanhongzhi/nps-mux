@@ -54,20 +54,14 @@ func (Self *priorityQueue) push(packager *muxPackager) {
 const maxStarving uint8 = 8
 
 func (Self *priorityQueue) Pop() (packager *muxPackager) {
-	var iter bool
-	for {
-		packager = Self.TryPop()
-		if packager != nil {
+	// 有限次数的直接尝试
+	for i := 0; i < 3; i++ {
+		if packager = Self.TryPop(); packager != nil {
 			return
 		}
 		if Self.stop {
 			return
 		}
-		if iter {
-			break
-			// trying to pop twice
-		}
-		iter = true
 		runtime.Gosched()
 	}
 	Self.cond.L.Lock()
