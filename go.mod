@@ -1,3 +1,3 @@
-module ehang.io/nps-mux
+module github.com/aohanhongzhi/nps-mux
 
 go 1.15
