@@ -323,40 +323,41 @@ func (Self *receiveWindow) Read(p []byte, id int32) (n int, err error) {
 
 func (Self *receiveWindow) readFromQueue(p []byte, id int32) (n int, err error) {
 	pOff := 0
-	l := 0
-copyData:
-	if Self.off == uint32(Self.element.L) {
-		// on the first Read method invoked, Self.off and Self.element.l
-		// both zero value
-		listEle.Put(Self.element)
-		if Self.closeOp {
-			return 0, io.EOF
+	for pOff < len(p) {
+		if Self.off == uint32(Self.element.L) {
+			// on the first Read method invoked, Self.off and Self.element.l
+			// both zero value
+			listEle.Put(Self.element)
+			if Self.closeOp {
+				return 0, io.EOF
+			}
+			Self.element, err = Self.bufQueue.Pop()
+			// if the queue is empty, Pop method will wait until one element push
+			// into the queue successful, or timeout.
+			// timer start on timeout parameter is set up
+			Self.off = 0
+			if err != nil {
+				Self.CloseWindow() // also close the window, to avoid read twice
+				if pOff > 0 {
+					return pOff, nil
+				}
+				return 0, err // queue receive stop or time out, break the loop and return
+			}
 		}
-		Self.element, err = Self.bufQueue.Pop()
-		// if the queue is empty, Pop method will wait until one element push
-		// into the queue successful, or timeout.
-		// timer start on timeout parameter is set up
-		Self.off = 0
-		if err != nil {
-			Self.CloseWindow() // also close the window, to avoid read twice
-			return             // queue receive stop or time out, break the loop and return
+		l := copy(p[pOff:], Self.element.Buf[Self.off:Self.element.L])
+		pOff += l
+		Self.off += uint32(l)
+		n += l
+		if Self.off == uint32(Self.element.L) {
+			windowBuff.Put(Self.element.Buf)
+			Self.sendStatus(id, Self.element.L)
+			// check the window full status
+		}
+		if !Self.element.Part {
+			break
 		}
 	}
-	l = copy(p[pOff:], Self.element.Buf[Self.off:Self.element.L])
-	pOff += l
-	Self.off += uint32(l)
-	n += l
-	l = 0
-	if Self.off == uint32(Self.element.L) {
-		windowBuff.Put(Self.element.Buf)
-		Self.sendStatus(id, Self.element.L)
-		// check the window full status
-	}
-	if pOff < len(p) && Self.element.Part {
-		// element is a part of the segments, trying to fill up buf p
-		goto copyData
-	}
-	return // buf p is full or all of segments in buf, return
+	return n, nil
 }
 
 func (Self *receiveWindow) sendStatus(id int32, l uint16) {
