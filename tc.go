@@ -21,7 +21,7 @@ type TrafficControl struct {
 }
 
 func Ips() (map[string]string, error) {
-
+	defer PanicHandler()
 	ips := make(map[string]string)
 
 	interfaces, err := net.Interfaces()
@@ -46,6 +46,7 @@ func Ips() (map[string]string, error) {
 
 // get ip and Eth information by Eth name
 func GetEthByIp(ipAddr string) (eth *Eth, err error) {
+	defer PanicHandler()
 	var interfaces []net.Interface
 	interfaces, err = net.Interfaces()
 	if err != nil {
@@ -97,6 +98,7 @@ func getArrayExhaustivity(arr []tcFunc) (result [][]tcFunc) {
 }
 
 func NewTrafficControl(ipAddr string) (*TrafficControl, error) {
+	defer PanicHandler()
 	Eth, err := GetEthByIp(ipAddr)
 	if err != nil {
 		return nil, err
@@ -109,6 +111,7 @@ func NewTrafficControl(ipAddr string) (*TrafficControl, error) {
 
 // test the network randomly
 func (tc *TrafficControl) RunNetRangeTest(f func()) error {
+	defer PanicHandler()
 	funcs := tc.getTestVariable()
 	groups := getArrayExhaustivity(funcs)
 	for _, v := range groups {
@@ -148,27 +151,27 @@ func (tc *TrafficControl) getTestVariable() []tcFunc {
 // this command sets the transmission of the network card to delayVal. At the same time,
 // about waveRatio of the packets will be delayed by ± wave.
 func (tc *TrafficControl) delay(opt, delayVal, wave, waveRatio string) {
-	tc.params = append(tc.params, []string{"delay", delayVal, wave, waveRatio,}...)
+	tc.params = append(tc.params, []string{"delay", delayVal, wave, waveRatio}...)
 }
 
 // this command sets the transmission of the network card to randomly drop lossRatio of packets with a success rate of lossSuccessRatio.
 func (tc *TrafficControl) loss(opt, lossRatio, lossSuccessRatio string) {
-	tc.params = append(tc.params, []string{"loss", lossRatio, lossSuccessRatio,}...)
+	tc.params = append(tc.params, []string{"loss", lossRatio, lossSuccessRatio}...)
 }
 
 // this command sets the transmission of the network card to randomly generate repeatRatio duplicate packets
 func (tc *TrafficControl) duplicate(opt, duplicateRatio string) {
-	tc.params = append(tc.params, []string{"duplicate", duplicateRatio,}...)
+	tc.params = append(tc.params, []string{"duplicate", duplicateRatio}...)
 }
 
 // this command sets the transmission of the network card to randomly generate corruptRatio corrupted packets.
 // the kernel version must be above 2.6.16
 func (tc *TrafficControl) corrupt(opt, corruptRatio string) {
-	tc.params = append(tc.params, []string{"corrupt", corruptRatio,}...)
+	tc.params = append(tc.params, []string{"corrupt", corruptRatio}...)
 }
 
 func (tc *TrafficControl) Run() error {
-	tc.params = append([]string{"qdisc", "add", "dev", tc.Eth.EthName, "root", "netem",}, tc.params...)
+	tc.params = append([]string{"qdisc", "add", "dev", tc.Eth.EthName, "root", "netem"}, tc.params...)
 	return runCmd(exec.Command("tc", tc.params...))
 }
 
