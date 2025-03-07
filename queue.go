@@ -307,6 +307,9 @@ func (Self *receiveWindowQueue) allowPop() (closed bool) {
 func (Self *receiveWindowQueue) waitPush() (err error) {
 	defer PanicHandler()
 	timeout := Self.timeout
+	if timeout.IsZero() {
+		timeout = time.Now().Add(time.Second * 5)
+	}
 	remaining := time.Until(timeout)
 	// 创建定时器（即使 remaining <= 0，定时器会立即触发）
 	timer := time.NewTimer(remaining)
