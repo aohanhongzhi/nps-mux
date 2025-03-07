@@ -323,40 +323,56 @@ func (Self *receiveWindow) Read(p []byte, id int32) (n int, err error) {
 
 func (Self *receiveWindow) readFromQueue(p []byte, id int32) (n int, err error) {
 	pOff := 0
-	l := 0
-copyData:
-	if Self.off == uint32(Self.element.L) {
-		// on the first Read method invoked, Self.off and Self.element.l
-		// both zero value
-		listEle.Put(Self.element)
-		if Self.closeOp {
-			return 0, io.EOF
+	maxIter := len(p) * 2 // 安全阀，最多迭代缓冲区长度两倍的次数
+	iteration := 0
+
+	for ; iteration < maxIter && pOff < len(p); iteration++ {
+		if Self.off == uint32(Self.element.L) {
+			// 回收元素并获取新数据
+			listEle.Put(Self.element)
+			if Self.closeOp {
+				return n, io.EOF // 返回已读取的数据量
+			}
+
+			Self.element, err = Self.bufQueue.Pop()
+			if err != nil {
+				Self.CloseWindow()
+				return n, err // 返回已读取的数据和错误
+			}
+			Self.off = 0
 		}
-		Self.element, err = Self.bufQueue.Pop()
-		// if the queue is empty, Pop method will wait until one element push
-		// into the queue successful, or timeout.
-		// timer start on timeout parameter is set up
-		Self.off = 0
-		if err != nil {
-			Self.CloseWindow() // also close the window, to avoid read twice
-			return             // queue receive stop or time out, break the loop and return
+
+		// 计算可复制长度
+		remaining := len(p) - pOff
+		copyLen := int(Self.element.L) - int(Self.off)
+		if copyLen > remaining {
+			copyLen = remaining
+		}
+
+		// 执行数据复制
+		copied := copy(p[pOff:pOff+copyLen], Self.element.Buf[Self.off:Self.element.L])
+		pOff += copied
+		Self.off += uint32(copied)
+		n += copied
+
+		// 检查元素是否完全复制
+		if Self.off == uint32(Self.element.L) {
+			windowBuff.Put(Self.element.Buf)
+			Self.sendStatus(id, Self.element.L)
+		}
+
+		// 当元素不是分片或缓冲区已满时终止循环
+		if !Self.element.Part || pOff >= len(p) {
+			break
 		}
 	}
-	l = copy(p[pOff:], Self.element.Buf[Self.off:Self.element.L])
-	pOff += l
-	Self.off += uint32(l)
-	n += l
-	l = 0
-	if Self.off == uint32(Self.element.L) {
-		windowBuff.Put(Self.element.Buf)
-		Self.sendStatus(id, Self.element.L)
-		// check the window full status
+
+	// 安全阀检查
+	if iteration >= maxIter {
+		return n, errors.New("exceeded maximum read iterations")
 	}
-	if pOff < len(p) && Self.element.Part {
-		// element is a part of the segments, trying to fill up buf p
-		goto copyData
-	}
-	return // buf p is full or all of segments in buf, return
+
+	return n, nil
 }
 
 func (Self *receiveWindow) sendStatus(id int32, l uint16) {

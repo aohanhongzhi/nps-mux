@@ -22,9 +22,9 @@ import (
 
 var conn1 net.Conn
 var conn2 net.Conn
-var clientIp = "172.18.0.5"
-var serverIp = "172.18.0.2"
-var appIp = "172.18.0.3"
+var clientIp = "192.168.0.168"
+var serverIp = "192.168.0.168"
+var appIp = "192.168.0.168"
 var userIp = "172.18.0.4"
 var bridgePort = "9999"
 var appPort = "9998"
@@ -332,14 +332,15 @@ func TestUser(t *testing.T) {
 	}
 }
 func TestNewMux2(t *testing.T) {
-	tc, err := NewTrafficControl("")
+	tc, err := NewTrafficControl("192.168.0.168")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	err = tc.RunNetRangeTest(func() {
 		server(tc.Eth.EthAddr)
 		client(tc.Eth.EthAddr)
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * 1)
 		rate := NewRate(1024 * 1024 * 3)
 		rate.Start()
 		conn2 = NewRateConn(rate, conn2)
