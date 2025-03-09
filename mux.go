@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -44,6 +45,7 @@ type Mux struct {
 	connType           string
 	writeQueue         priorityQueue
 	newConnQueue       connQueue
+	closeOnce          sync.Once
 }
 
 func NewMux(c net.Conn, connType string, pingCheckThreshold int) *Mux {
@@ -114,6 +116,7 @@ func (s *Mux) Accept() (net.Conn, error) {
 	}
 	conn := <-s.newConnCh
 	if conn == nil {
+		// 也有可能是因为创建失败
 		return nil, errors.New("accpet error,the conn has closed")
 	}
 	return conn, nil
@@ -259,9 +262,24 @@ func (s *Mux) readSession() {
 			}
 			pack = muxPack.Get()
 			s.bw.StartRead()
+			// 每次读取前设置超时（例如30秒）
+			if err := s.conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+				log.Printf("SetReadDeadline failed: %v", err)
+				break
+			}
 			if l, err = pack.UnPack(s.conn); err != nil {
-				log.Println("mux: read session unpack from connection err", err)
-				_ = s.Close()
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					log.Println("Read timeout, closing connection")
+				} else if err == io.EOF {
+					log.Println("Connection closed by peer")
+				} else {
+					log.Println("mux: read session unpack from connection err", err)
+				}
+				err1 := s.Close()
+				if err1 != nil {
+					log.Print(err1)
+				}
 				break
 			}
 			s.bw.SetCopySize(l)
@@ -340,21 +358,31 @@ func (s *Mux) Close() (err error) {
 	if s.IsClose {
 		return errors.New("the mux has closed")
 	}
-	s.IsClose = true
-	log.Println("close mux")
-	s.connMap.Close()
-	//s.connMap = nil
-	s.closeChan <- struct{}{}
-	close(s.newConnCh)
-	// while target host close socket without finish steps, conn.Close method maybe blocked
-	// and tcp status change to CLOSE WAIT or TIME WAIT, so we close it in other goroutine
-	_ = s.conn.SetDeadline(time.Now().Add(time.Second * 5))
-	go func() {
-		defer PanicHandler()
-		s.conn.Close()
-		s.bw.Close()
-	}()
-	s.release()
+	s.closeOnce.Do(func() {
+		// 实际关闭逻辑
+		s.IsClose = true
+		log.Println("close mux")
+		s.connMap.Close()
+		//s.connMap = nil
+		s.closeChan <- struct{}{}
+		close(s.newConnCh)
+		// while target host close socket without finish steps, conn.Close method maybe blocked
+		// and tcp status change to CLOSE WAIT or TIME WAIT, so we close it in other goroutine
+		_ = s.conn.SetDeadline(time.Now().Add(time.Second * 5))
+		if err := s.conn.Close(); err != nil {
+			log.Printf("Close connection error: %v", err)
+		}
+		if s.bw != nil {
+			log.Println("Closing bandwidth file descriptor...")
+			if err := s.bw.fd.Close(); err != nil {
+				log.Printf("Error closing bandwidth fd: %v", err)
+			} else {
+				s.bw.fd = nil // 避免重复关闭
+			}
+		}
+
+		s.release()
+	})
 	return
 }
 
@@ -456,7 +484,10 @@ func (Self *bandwidth) Get() (bw float64) {
 
 func (Self *bandwidth) Close() error {
 	defer PanicHandler()
-	return Self.fd.Close()
+	if Self.fd != nil {
+		return Self.fd.Close()
+	}
+	return nil
 }
 
 const counterBits = 4

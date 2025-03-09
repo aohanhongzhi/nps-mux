@@ -2,7 +2,7 @@ package nps_mux
 
 import (
 	"errors"
-	"io"
+	"log"
 	"math"
 	"runtime"
 	"sync"
@@ -300,6 +300,7 @@ func (Self *receiveWindowQueue) allowPop() (closed bool) {
 	case Self.readOp <- struct{}{}:
 		return false
 	case <-Self.stopOp:
+		log.Print("--receiveWindowQueue.allowPop: stop operation 信号")
 		return true
 	}
 }
@@ -313,7 +314,8 @@ func (Self *receiveWindowQueue) waitPush() (err error) {
 		case <-Self.readOp:
 			return nil
 		case <-Self.stopOp:
-			err = io.EOF
+			err = errors.New("--receiveWindowQueue stopped")
+			log.Print(err)
 			return
 		}
 	}
@@ -323,7 +325,7 @@ func (Self *receiveWindowQueue) waitPush() (err error) {
 	case <-Self.readOp:
 		return nil
 	case <-Self.stopOp:
-		err = io.EOF
+		err = errors.New("receiveWindowQueue stopped")
 		return
 	case <-timer.C:
 		err = errors.New("mux.queue: read time out")
