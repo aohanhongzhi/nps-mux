@@ -127,6 +127,9 @@ func (Self *muxPackager) Pack(writer io.Writer) (err error) {
 
 func (Self *muxPackager) UnPack(reader io.Reader) (n uint16, err error) {
 	defer PanicHandler()
+	defer func() {
+		windowBuff.Put(Self.buf)
+	}()
 	Self.buf = windowBuff.Get()
 	Self.buf = Self.buf[0:13]
 	l, err := io.ReadFull(reader, Self.buf[:5])
@@ -147,7 +150,6 @@ func (Self *muxPackager) UnPack(reader io.Reader) (n uint16, err error) {
 		Self.window = binary.LittleEndian.Uint64(Self.buf[5:13])
 		n += uint16(l) // uint64
 	}
-	windowBuff.Put(Self.buf)
 	return
 }
 

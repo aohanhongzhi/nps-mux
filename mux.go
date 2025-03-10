@@ -257,10 +257,25 @@ func (s *Mux) readSession() {
 			if s.IsClose {
 				return
 			}
+
+			// [新增] 设置读取超时（关键修改点）
+			if err1 := s.conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err1 != nil {
+				log.Println("mux: set read deadline error:", err1)
+				_ = s.Close()
+				muxPack.Put(pack) // [重要] 确保错误时释放pack资源
+				break
+			}
+
 			pack = muxPack.Get()
 			s.bw.StartRead()
 			if l, err = pack.UnPack(s.conn); err != nil {
-				log.Println("mux: read session unpack from connection err", err)
+				// 区分超时错误和其他错误
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					log.Println("mux: read session timeout, closing connection")
+				} else {
+					log.Println("mux: read session unpack from connection err", err)
+				}
 				_ = s.Close()
 				break
 			}
@@ -279,7 +294,7 @@ func (s *Mux) readSession() {
 				continue
 			case muxPingFlag: //ping
 				s.sendInfo(muxPingReturn, muxPing, pack.content)
-				windowBuff.Put(pack.content)
+				windowBuff.Put(pack.content) // 显式释放
 				continue
 			case muxPingReturn:
 				s.pingCh <- pack.content
@@ -290,6 +305,7 @@ func (s *Mux) readSession() {
 				case muxNewMsg, muxNewMsgPart: //New msg from remote connection
 					err = s.newMsg(connection, pack)
 					if err != nil {
+						windowBuff.Put(pack.content) // 错误时释放
 						log.Println("mux: read session connection New msg err", err)
 						_ = connection.Close()
 					}
