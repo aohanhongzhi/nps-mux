@@ -21,7 +21,9 @@ type priorityQueue struct {
 }
 
 func (Self *priorityQueue) New() {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.highestChain = new(bufChain)
 	Self.highestChain.new(4)
 	Self.middleChain = new(bufChain)
@@ -33,14 +35,18 @@ func (Self *priorityQueue) New() {
 }
 
 func (Self *priorityQueue) Push(packager *muxPackager) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.push(packager)
 	Self.cond.Broadcast()
 	return
 }
 
 func (Self *priorityQueue) push(packager *muxPackager) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	switch packager.flag {
 	case muxPingFlag, muxPingReturn:
 		Self.highestChain.pushHead(unsafe.Pointer(packager))
@@ -57,32 +63,37 @@ func (Self *priorityQueue) push(packager *muxPackager) {
 const maxStarving uint8 = 8
 
 func (Self *priorityQueue) Pop() (packager *muxPackager) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	// 有限次数的直接尝试
-	for i := 0; i < 3; i++ {
-		if packager = Self.TryPop(); packager != nil {
+	// 调整自旋次数（原 3 次 -> 5~10 次）
+	const maxSpin = 10
+	for i := 0; i < maxSpin; i++ {
+		if packager = Self.TryPop(); packager != nil || Self.stop {
 			return
 		}
-		if Self.stop {
-			return
+		// 使用指数退避减少竞争
+		if i > 3 {
+			time.Sleep(time.Duration(i-3) * 10 * time.Microsecond)
 		}
-		runtime.Gosched()
 	}
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
-	for packager = Self.TryPop(); packager == nil; {
-		if Self.stop {
+	for {
+		if packager = Self.TryPop(); packager != nil || Self.stop {
 			return
 		}
+		// 使用 Wait 超时避免永久阻塞
 		Self.cond.Wait()
-		// wait for it with no more iter
-		packager = Self.TryPop()
 	}
 	return
 }
 
 func (Self *priorityQueue) TryPop() (packager *muxPackager) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	ptr, ok := Self.highestChain.popTail()
 	if ok {
 		packager = (*muxPackager)(ptr)
@@ -117,7 +128,9 @@ func (Self *priorityQueue) TryPop() (packager *muxPackager) {
 }
 
 func (Self *priorityQueue) Stop() {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.stop = true
 	Self.cond.Broadcast()
 }
@@ -127,10 +140,13 @@ type connQueue struct {
 	starving uint8
 	stop     bool
 	cond     *sync.Cond
+	count    int64 // 新增原子计数器，用来表示有没有元素，没有元素就广播
 }
 
 func (Self *connQueue) New() {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.chain = new(bufChain)
 	Self.chain.new(32)
 	locker := new(sync.Mutex)
@@ -138,39 +154,56 @@ func (Self *connQueue) New() {
 }
 
 func (Self *connQueue) Push(connection *conn) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.chain.pushHead(unsafe.Pointer(connection))
-	Self.cond.Broadcast()
+	// 仅在队列为空时广播，避免过度唤醒
+	// 原子增加计数
+	newCount := atomic.AddInt64(&Self.count, 1)
+	// 只有当队列从空变为非空时唤醒
+	if newCount == 1 {
+		Self.cond.Signal()
+		//Self.cond.Broadcast()
+	}
 	return
 }
 
 func (Self *connQueue) Pop() (connection *conn) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	// 有限次数的直接尝试
 	for i := 0; i < 3; i++ {
 		if connection = Self.TryPop(); connection != nil {
+			atomic.AddInt64(&Self.count, -1) // 原子减少计数
 			return
 		}
 		if Self.stop {
+			// 这里返回就是空的，
 			return
 		}
 		runtime.Gosched()
 	}
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
-	for connection = Self.TryPop(); connection == nil; {
+	for {
+		if connection = Self.TryPop(); connection != nil {
+			atomic.AddInt64(&Self.count, -1) // 原子减少计数
+			return
+		}
 		if Self.stop {
 			return
 		}
 		Self.cond.Wait()
-		// wait for it with no more iter
-		connection = Self.TryPop()
 	}
 	return
 }
 
 func (Self *connQueue) TryPop() (connection *conn) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	ptr, ok := Self.chain.popTail()
 	if ok {
 		connection = (*conn)(ptr)
@@ -180,7 +213,9 @@ func (Self *connQueue) TryPop() (connection *conn) {
 }
 
 func (Self *connQueue) Stop() {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.stop = true
 	Self.cond.Broadcast()
 }
@@ -192,14 +227,18 @@ type listElement struct {
 }
 
 func (Self *listElement) Reset() {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.L = 0
 	Self.Buf = nil
 	Self.Part = false
 }
 
 func newListElement(buf []byte, l uint16, part bool) (element *listElement, err error) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	if uint16(len(buf)) != l {
 		err = errors.New("listElement: buf length not match")
 		return
@@ -227,7 +266,9 @@ type receiveWindowQueue struct {
 }
 
 func newReceiveWindowQueue() *receiveWindowQueue {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	queue := receiveWindowQueue{
 		chain:  new(bufChain),
 		stopOp: make(chan struct{}, 2),
@@ -238,7 +279,9 @@ func newReceiveWindowQueue() *receiveWindowQueue {
 }
 
 func (Self *receiveWindowQueue) Push(element *listElement) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	var length, wait uint32
 	for {
 		ptrs := atomic.LoadUint64(&Self.lengthWait)
@@ -257,7 +300,9 @@ func (Self *receiveWindowQueue) Push(element *listElement) {
 }
 
 func (Self *receiveWindowQueue) Pop() (element *listElement, err error) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	var length uint32
 startPop:
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
@@ -284,7 +329,9 @@ startPop:
 }
 
 func (Self *receiveWindowQueue) TryPop() (element *listElement) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	ptr, ok := Self.chain.popTail()
 	if ok {
 		element = (*listElement)(ptr)
@@ -295,7 +342,9 @@ func (Self *receiveWindowQueue) TryPop() (element *listElement) {
 }
 
 func (Self *receiveWindowQueue) allowPop() (closed bool) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	select {
 	case Self.readOp <- struct{}{}:
 		return false
@@ -305,7 +354,9 @@ func (Self *receiveWindowQueue) allowPop() (closed bool) {
 }
 
 func (Self *receiveWindowQueue) waitPush() (err error) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	t := Self.timeout.Sub(time.Now())
 	if t <= 0 {
 		// not Set the timeout, so wait for it without timeout, just like a tcp connection
@@ -332,7 +383,9 @@ func (Self *receiveWindowQueue) waitPush() (err error) {
 }
 
 func (Self *receiveWindowQueue) Len() (n uint32) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
 	n, _ = Self.chain.head.unpack(ptrs)
 	// just for unpack method use
@@ -340,13 +393,17 @@ func (Self *receiveWindowQueue) Len() (n uint32) {
 }
 
 func (Self *receiveWindowQueue) Stop() {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.stopOp <- struct{}{}
 	Self.stopOp <- struct{}{}
 }
 
 func (Self *receiveWindowQueue) SetTimeOut(t time.Time) {
-	defer PanicHandler()
+	if err := recover(); err != nil {
+		PanicHandler()
+	}
 	Self.timeout = t
 }
 

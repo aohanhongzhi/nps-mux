@@ -243,6 +243,9 @@ func (s *Mux) readSession() {
 			if s.IsClose {
 				break // make sure that is closed
 			}
+			if connection == nil {
+				break
+			}
 			s.connMap.Set(connection.connId, connection) //it has been Set before send ok
 			s.newConnCh <- connection
 			s.sendInfo(muxNewConnOk, connection.connId, nil)
