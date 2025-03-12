@@ -16,7 +16,7 @@ type priorityQueue struct {
 	middleChain  *bufChain
 	lowestChain  *bufChain
 	starving     uint8
-	stop         bool
+	stop         int32 // 改为原子类型
 	cond         *sync.Cond
 }
 
@@ -59,24 +59,16 @@ const maxStarving uint8 = 8
 func (Self *priorityQueue) Pop() (packager *muxPackager) {
 	defer PanicHandler()
 	// 有限次数的直接尝试
-	for i := 0; i < 3; i++ {
+	Self.cond.L.Lock()
+	defer Self.cond.L.Unlock()
+	for {
 		if packager = Self.TryPop(); packager != nil {
 			return
 		}
-		if Self.stop {
-			return
-		}
-		runtime.Gosched()
-	}
-	Self.cond.L.Lock()
-	defer Self.cond.L.Unlock()
-	for packager = Self.TryPop(); packager == nil; {
-		if Self.stop {
-			return
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
+			return nil
 		}
 		Self.cond.Wait()
-		// wait for it with no more iter
-		packager = Self.TryPop()
 	}
 	return
 }
@@ -118,14 +110,14 @@ func (Self *priorityQueue) TryPop() (packager *muxPackager) {
 
 func (Self *priorityQueue) Stop() {
 	defer PanicHandler()
-	Self.stop = true
+	atomic.StoreInt32(&Self.stop, 1) // ✅ 原子写操作
 	Self.cond.Broadcast()
 }
 
 type connQueue struct {
 	chain    *bufChain
 	starving uint8
-	stop     bool
+	stop     int32 // 改为原子类型
 	cond     *sync.Cond
 }
 
@@ -151,7 +143,7 @@ func (Self *connQueue) Pop() (connection *conn) {
 		if connection = Self.TryPop(); connection != nil {
 			return
 		}
-		if Self.stop {
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
 			return
 		}
 		runtime.Gosched()
@@ -159,7 +151,7 @@ func (Self *connQueue) Pop() (connection *conn) {
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
 	for connection = Self.TryPop(); connection == nil; {
-		if Self.stop {
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
 			return
 		}
 		Self.cond.Wait()
@@ -181,7 +173,7 @@ func (Self *connQueue) TryPop() (connection *conn) {
 
 func (Self *connQueue) Stop() {
 	defer PanicHandler()
-	Self.stop = true
+	atomic.StoreInt32(&Self.stop, 1) // ✅ 原子写操作
 	Self.cond.Broadcast()
 }
 
