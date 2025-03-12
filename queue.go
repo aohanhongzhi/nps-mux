@@ -298,10 +298,18 @@ func (Self *receiveWindowQueue) allowPop() (closed bool) {
 
 func (Self *receiveWindowQueue) waitPush() (err error) {
 	defer PanicHandler()
-	timeout := Self.timeout
-	remaining := time.Until(timeout)
-	// 创建定时器（即使 remaining <= 0，定时器会立即触发）
-	timer := time.NewTimer(remaining)
+	t := Self.timeout.Sub(time.Now())
+	if t <= 0 {
+		// not Set the timeout, so wait for it without timeout, just like a tcp connection
+		select {
+		case <-Self.readOp:
+			return nil
+		case <-Self.stopOp:
+			err = io.EOF
+			return
+		}
+	}
+	timer := time.NewTimer(t)
 	defer timer.Stop()
 	select {
 	case <-Self.readOp:
