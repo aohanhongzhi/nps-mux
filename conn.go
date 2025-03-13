@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 type conn struct {
@@ -161,11 +162,35 @@ func (Self *window) New() {
 
 func (Self *window) CloseWindow() {
 	defer PanicHandler()
-	if atomic.LoadInt32(&Self.closeOp) == 0 {
-		atomic.StoreInt32(&Self.closeOp, 1)
-		Self.closeOpCh <- struct{}{}
-		Self.closeOpCh <- struct{}{}
+	var once sync.Once
+	closeFunc := func() {
+		if atomic.CompareAndSwapInt32(&Self.closeOp, 0, 1) {
+			defer func() {
+				// 安全处理通道关闭
+				if r := recover(); r == nil {
+					close(Self.closeOpCh)
+				}
+			}()
+			// 内存屏障保证写入可见性
+			atomic.StoreInt32(&Self.closeOp, 1)
+			runtime.Gosched() // 让出CPU确保状态传播
+			
+			select {
+			case Self.closeOpCh <- struct{}{}:
+			default:
+			}
+			
+			// 保证第二次发送不会panic
+			select {
+			case Self.closeOpCh <- struct{}{}:
+			default:
+			}
+		}
 	}
+	once.Do(closeFunc)
+	
+	// 保证对象生命周期
+	runtime.KeepAlive(Self)
 }
 
 type receiveWindow struct {
@@ -418,22 +443,32 @@ func (Self *receiveWindow) CloseWindow() {
 }
 
 func (Self *receiveWindow) release() {
-	//if Self.element != nil {
-	//	if Self.element.Buf != nil {
-	//		common.WindowBuff.Put(Self.element.Buf)
-	//	}
-	//	common.ListElementPool.Put(Self.element)
-	//}
+	// 确保element资源释放
+	if Self.element != nil {
+		if Self.element.Buf != nil {
+			windowBuff.Put(Self.element.Buf)
+			Self.element.Buf = nil
+		}
+		listEle.Put(Self.element)
+		Self.element = nil
+	}
+
+	// 清空队列剩余元素
 	for {
 		ele := Self.bufQueue.TryPop()
 		if ele == nil {
-			return
+			break
 		}
 		if ele.Buf != nil {
 			windowBuff.Put(ele.Buf)
+			ele.Buf = nil
 		}
 		listEle.Put(ele)
-	} // release resource
+	}
+	
+	// 内存屏障保证可见性
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&Self.element)), unsafe.Pointer(nil))
+	runtime.KeepAlive(Self)
 }
 
 type sendWindow struct {
