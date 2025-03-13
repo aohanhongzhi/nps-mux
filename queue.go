@@ -1,6 +1,7 @@
 package nps_mux
 
 import (
+	"context"
 	"errors"
 	"io"
 	"math"
@@ -208,6 +209,8 @@ type receiveWindowQueue struct {
 	chain      *bufChain
 	stopOp     chan struct{}
 	readOp     chan struct{}
+	ctx        context.Context
+	cancel     context.CancelFunc
 	// https://golang.org/pkg/sync/atomic/#pkg-note-BUG
 	// On non-Linux ARM, the 64-bit functions use instructions unavailable before the ARMv6k core.
 	// On ARM, x86-32, and 32-bit MIPS, it is the caller's responsibility
@@ -220,10 +223,13 @@ type receiveWindowQueue struct {
 
 func newReceiveWindowQueue() *receiveWindowQueue {
 	defer PanicHandler()
+	ctx, cancel := context.WithCancel(context.Background())
 	queue := receiveWindowQueue{
 		chain:  new(bufChain),
 		stopOp: make(chan struct{}, 2),
 		readOp: make(chan struct{}),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 	queue.chain.new(64)
 	return &queue
@@ -266,12 +272,34 @@ startPop:
 		goto startPop // wait finish, trying to Get the New status
 	}
 	// length is not zero, so try to pop
-	for {
+	const maxRetries = 100
+	for i := 0; i < maxRetries; i++ {
 		element = Self.TryPop()
 		if element != nil {
 			return
 		}
-		runtime.Gosched() // another goroutine is still pushing
+		runtime.Gosched()
+	}
+
+	// After max retries, check context before final attempt
+	select {
+	case <-Self.ctx.Done():
+		return nil, Self.ctx.Err()
+	default:
+	}
+
+	// Final attempt with timeout
+	select {
+	case <-Self.readOp:
+		element = Self.TryPop()
+		if element != nil {
+			return element, nil
+		}
+		return nil, errors.New("queue empty after notification")
+	case <-time.After(100 * time.Millisecond):
+		return nil, errors.New("pop timeout after retries")
+	case <-Self.ctx.Done():
+		return nil, Self.ctx.Err()
 	}
 }
 

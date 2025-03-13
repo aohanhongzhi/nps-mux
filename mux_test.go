@@ -331,57 +331,6 @@ func TestUser(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-func TestNewMux2(t *testing.T) {
-	tc, err := NewTrafficControl("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = tc.RunNetRangeTest(func() {
-		server(tc.Eth.EthAddr)
-		client(tc.Eth.EthAddr)
-		time.Sleep(time.Second * 3)
-		rate := NewRate(1024 * 1024 * 3)
-		rate.Start()
-		conn2 = NewRateConn(rate, conn2)
-		go func() {
-			m2 := NewMux(conn2, "tcp", 60)
-			for {
-				c, err := m2.Accept()
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				go func() {
-					_, _ = c.Write(bytes.Repeat([]byte{0}, 1024*1024*100))
-					_ = c.Close()
-				}()
-			}
-		}()
-
-		m1 := NewMux(conn1, "tcp", 60)
-		tmpCpnn, err := m1.NewConn()
-		if err != nil {
-			log.Println("nps new conn err ", err)
-			return
-		}
-		buf := make([]byte, 1024*1024)
-		var count float64
-		count = 0
-		start := time.Now()
-		for {
-			n, err := tmpCpnn.Read(buf)
-			count += float64(n)
-			log.Println(m1.bw.Get())
-			log.Println(uint32(math.Float64frombits(atomic.LoadUint64(&m1.latency))))
-			if err != nil {
-				log.Println(err)
-				break
-			}
-		}
-		log.Println("now rate", count/time.Now().Sub(start).Seconds()/1024/1024)
-	})
-	log.Println(err.Error())
-}
 func TestNewMux(t *testing.T) {
 	go func() {
 		_ = http.ListenAndServe("0.0.0.0:8889", nil)

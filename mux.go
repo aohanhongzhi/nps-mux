@@ -1,12 +1,14 @@
 package nps_mux
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
 	"math"
 	"net"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"time"
 )
@@ -27,23 +29,36 @@ const (
 	// we use 128M, reduce memory usage
 )
 
+// 实现了 net.Listener 接口
 type Mux struct {
-	latency uint64 // we store latency in bits, but it's float64
-	net.Listener
-	conn               net.Conn
-	connMap            *connMap
-	newConnCh          chan *conn
-	id                 int32
-	closeChan          chan struct{}
-	IsClose            int32 // 改为原子类型
-	counter            *latencyCounter
-	bw                 *bandwidth
-	pingCh             chan []byte
-	pingCheckTime      uint32 // we check the ping per 5s
-	pingCheckThreshold uint32
-	connType           string
-	writeQueue         priorityQueue
-	newConnQueue       connQueue
+	// 8-byte aligned atomic fields first
+	latency uint64          // 8 bytes (atomic)
+	connMap *connMap        // 8 bytes
+	counter *latencyCounter // 8 bytes
+	bw      *bandwidth      // 8 bytes
+
+	// 8-byte channels
+	newConnCh chan *conn    // 8 bytes
+	closeChan chan struct{} // 8 bytes
+	pingCh    chan []byte   // 8 bytes
+
+	// 16-byte interfaces
+	net.Listener          // 16 bytes
+	conn         net.Conn // 16 bytes
+
+	// 16-byte string
+	connType string // 16 bytes
+
+	// 4-byte fields packed with padding
+	pingCheckTime      uint32  // 4 bytes (atomic)
+	pingCheckThreshold uint32  // 4 bytes (atomic)
+	id                 int32   // 4 bytes (atomic)
+	IsClose            int32   // 4 bytes (atomic)
+	_                  [4]byte // explicit padding
+
+	// Final struct fields
+	writeQueue   priorityQueue
+	newConnQueue connQueue
 }
 
 func NewMux(c net.Conn, connType string, pingCheckThreshold int) *Mux {
@@ -253,37 +268,63 @@ func (s *Mux) readSession() {
 		var pack *muxPackager
 		var l uint16
 		var err error
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		workerPool := make(chan struct{}, runtime.NumCPU()*2)
+
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			case workerPool <- struct{}{}:
+				defer func() { <-workerPool }()
+			}
+
 			if atomic.LoadInt32(&s.IsClose) != 0 {
 				return
 			}
+
 			pack = muxPack.Get()
+
+			if err = s.conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+				log.Println("mux: set read deadline err", err)
+				_ = s.Close()
+				break
+			}
+
 			s.bw.StartRead()
 			if l, err = pack.UnPack(s.conn); err != nil {
 				log.Println("mux: read session unpack from connection err", err)
 				_ = s.Close()
 				break
 			}
+
 			s.bw.SetCopySize(l)
-			//if pack.flag == muxNewMsg || pack.flag == muxNewMsgPart {
-			//	if pack.length >= 100 {
-			//		log.Printf("read session id %d pointer %p\n%v", pack.id, pack.content, string(pack.content[:100]))
-			//	} else {
-			//		log.Printf("read session id %d pointer %p\n%v", pack.id, pack.content, string(pack.content[:pack.length]))
-			//	}
-			//}
+
 			switch pack.flag {
-			case muxNewConn: //New connection
+			case muxNewConn:
 				connection := NewConn(pack.id, s)
-				s.newConnQueue.Push(connection)
-				continue
-			case muxPingFlag: //ping
-				s.sendInfo(muxPingReturn, muxPing, pack.content)
-				windowBuff.Put(pack.content)
-				continue
+				go func(c *conn) {
+					select {
+					case <-ctx.Done():
+						c.Close()
+					default:
+						s.newConnQueue.Push(c)
+					}
+				}(connection)
+			case muxPingFlag:
+				go func() {
+					s.sendInfo(muxPingReturn, muxPing, pack.content)
+					windowBuff.Put(pack.content)
+				}()
 			case muxPingReturn:
-				s.pingCh <- pack.content
-				continue
+				select {
+				case s.pingCh <- pack.content:
+				default:
+					windowBuff.Put(pack.content)
+				}
 			}
 			if connection, ok := s.connMap.Get(pack.id); ok && atomic.LoadInt32(&connection.isClose) == 0 {
 				switch pack.flag {
