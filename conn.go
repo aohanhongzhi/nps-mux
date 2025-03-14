@@ -174,12 +174,12 @@ func (Self *window) CloseWindow() {
 			// 内存屏障保证写入可见性
 			atomic.StoreInt32(&Self.closeOp, 1)
 			runtime.Gosched() // 让出CPU确保状态传播
-			
+
 			select {
 			case Self.closeOpCh <- struct{}{}:
 			default:
 			}
-			
+
 			// 保证第二次发送不会panic
 			select {
 			case Self.closeOpCh <- struct{}{}:
@@ -188,7 +188,7 @@ func (Self *window) CloseWindow() {
 		}
 	}
 	once.Do(closeFunc)
-	
+
 	// 保证对象生命周期
 	runtime.KeepAlive(Self)
 }
@@ -350,6 +350,11 @@ func (Self *receiveWindow) readFromQueue(p []byte, id int32) (n int, err error) 
 	pOff := 0
 	l := 0
 copyData:
+
+	if atomic.LoadInt32(&Self.closeOp) != 0 {
+		return 0, io.EOF
+	}
+
 	if Self.off == uint32(Self.element.L) {
 		// on the first Read method invoked, Self.off and Self.element.l
 		// both zero value
@@ -367,15 +372,19 @@ copyData:
 			return             // queue receive stop or time out, break the loop and return
 		}
 	}
-	l = copy(p[pOff:], Self.element.Buf[Self.off:Self.element.L])
-	pOff += l
-	Self.off += uint32(l)
-	n += l
-	l = 0
-	if Self.off == uint32(Self.element.L) {
-		windowBuff.Put(Self.element.Buf)
-		Self.sendStatus(id, Self.element.L)
-		// check the window full status
+	if Self.element != nil {
+		l = copy(p[pOff:], Self.element.Buf[Self.off:Self.element.L])
+		pOff += l
+		Self.off += uint32(l)
+		n += l
+		l = 0
+		if Self.off == uint32(Self.element.L) {
+			windowBuff.Put(Self.element.Buf)
+			Self.sendStatus(id, Self.element.L)
+			// check the window full status
+		}
+	} else {
+		goto copyData
 	}
 	if pOff < len(p) && Self.element.Part {
 		// element is a part of the segments, trying to fill up buf p
@@ -465,7 +474,7 @@ func (Self *receiveWindow) release() {
 		}
 		listEle.Put(ele)
 	}
-	
+
 	// 内存屏障保证可见性
 	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&Self.element)), unsafe.Pointer(nil))
 	runtime.KeepAlive(Self)
