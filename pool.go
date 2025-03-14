@@ -44,7 +44,9 @@ func (Self *windowBufferPool) Get() (buf []byte) {
 func (Self *windowBufferPool) Put(x []byte) {
 	defer PanicHandler()
 	//trace(x, "put")
-	Self.pool.Put(x[:poolSizeWindow]) // make buf to full
+	if x != nil {
+		Self.pool.Put(x[:poolSizeWindow]) // make buf to full
+	}
 }
 
 type muxPackagerPool struct {
