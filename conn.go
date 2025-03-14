@@ -437,16 +437,6 @@ func (Self *receiveWindow) CloseWindow() {
 }
 
 func (Self *receiveWindow) release() {
-	// 确保element资源释放
-	if Self.element != nil {
-		if Self.element.Buf != nil {
-			windowBuff.Put(Self.element.Buf)
-			Self.element.Buf = nil
-		}
-		listEle.Put(Self.element)
-		Self.element = nil
-	}
-
 	// 清空队列剩余元素
 	for {
 		ele := Self.bufQueue.TryPop()
