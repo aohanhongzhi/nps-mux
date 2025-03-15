@@ -208,6 +208,8 @@ type receiveWindowQueue struct {
 	chain      *bufChain
 	stopOp     chan struct{}
 	readOp     chan struct{}
+	cond       *sync.Cond
+	stop       int32 // 改为原子类型
 	// https://golang.org/pkg/sync/atomic/#pkg-note-BUG
 	// On non-Linux ARM, the 64-bit functions use instructions unavailable before the ARMv6k core.
 	// On ARM, x86-32, and 32-bit MIPS, it is the caller's responsibility
@@ -225,6 +227,8 @@ func newReceiveWindowQueue() *receiveWindowQueue {
 		stopOp: make(chan struct{}, 2),
 		readOp: make(chan struct{}),
 	}
+	locker := new(sync.Mutex)
+	queue.cond = sync.NewCond(locker)
 	queue.chain.new(64)
 	return &queue
 }
@@ -239,12 +243,16 @@ func (Self *receiveWindowQueue) Push(element *listElement) {
 		if atomic.CompareAndSwapUint64(&Self.lengthWait, ptrs, Self.chain.head.pack(length, 0)) {
 			break
 		}
+		if atomic.LoadInt32(&Self.stop) != 0 {
+			return
+		}
 		// another goroutine change the length or into wait, make sure
 	}
 	Self.chain.pushHead(unsafe.Pointer(element))
 	if wait == 1 {
 		Self.allowPop()
 	}
+	Self.cond.Broadcast()
 	return
 }
 
@@ -252,6 +260,9 @@ func (Self *receiveWindowQueue) Pop() (element *listElement, err error) {
 	defer PanicHandler()
 	var length uint32
 startPop:
+	if atomic.LoadInt32(&Self.stop) != 0 {
+		return
+	}
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
 	length, _ = Self.chain.head.unpack(ptrs)
 	if length == 0 {
@@ -266,12 +277,17 @@ startPop:
 		goto startPop // wait finish, trying to Get the New status
 	}
 	// length is not zero, so try to pop
+	Self.cond.L.Lock()
+	defer Self.cond.L.Unlock()
 	for {
 		element = Self.TryPop()
 		if element != nil {
 			return
 		}
-		runtime.Gosched() // another goroutine is still pushing
+		if atomic.LoadInt32(&Self.stop) != 0 {
+			return
+		}
+		Self.cond.Wait()
 	}
 }
 
@@ -333,6 +349,7 @@ func (Self *receiveWindowQueue) Len() (n uint32) {
 
 func (Self *receiveWindowQueue) Stop() {
 	defer PanicHandler()
+	atomic.StoreInt32(&Self.stop, 1) // ✅ 原子写操作
 	Self.stopOp <- struct{}{}
 	Self.stopOp <- struct{}{}
 }
