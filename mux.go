@@ -110,11 +110,11 @@ func (s *Mux) NewConn() (*conn, error) {
 func (s *Mux) Accept() (net.Conn, error) {
 	defer PanicHandler()
 	if atomic.LoadInt32(&s.IsClose) != 0 {
-		return nil, errors.New("accpet error,the mux has closed")
+		return nil, errors.New("accept error,the mux has closed")
 	}
 	conn := <-s.newConnCh
 	if conn == nil {
-		return nil, errors.New("accpet error,the conn has closed")
+		return nil, errors.New("accept error,the conn has closed")
 	}
 	return conn, nil
 }
@@ -341,7 +341,7 @@ func (s *Mux) Close() (err error) {
 		return errors.New("the mux has closed")
 	}
 	atomic.StoreInt32(&s.IsClose, 1)
-	log.Println("close mux")
+	log.Println("close mux ", s.conn.RemoteAddr())
 	s.connMap.Close()
 	//s.connMap = nil
 	s.closeChan <- struct{}{}
