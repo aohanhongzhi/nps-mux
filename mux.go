@@ -110,11 +110,11 @@ func (s *Mux) NewConn() (*conn, error) {
 func (s *Mux) Accept() (net.Conn, error) {
 	defer PanicHandler()
 	if s.IsClose {
-		return nil, errors.New("accpet error,the mux has closed")
+		return nil, errors.New("accept error,the mux has closed")
 	}
 	conn := <-s.newConnCh
 	if conn == nil {
-		return nil, errors.New("accpet error,the conn has closed")
+		return nil, errors.New("accept error,the conn is nil")
 	}
 	return conn, nil
 }
@@ -261,7 +261,8 @@ func (s *Mux) readSession() {
 			pack = muxPack.Get()
 			s.bw.StartRead()
 			if l, err = pack.UnPack(s.conn); err != nil {
-				log.Println("mux: read session unpack from connection err", err)
+				//  2025/03/16 11:41:17 mux: read session unpack from connection err read tcp 127.0.0.1:8024->127.0.0.1:53754: read: connection reset by peer
+				//log.Println("mux: read session unpack from connection err", err)
 				_ = s.Close()
 				break
 			}
@@ -342,7 +343,7 @@ func (s *Mux) Close() (err error) {
 		return errors.New("the mux has closed")
 	}
 	s.IsClose = true
-	log.Println("close mux")
+	//log.Println("close mux")
 	s.connMap.Close()
 	//s.connMap = nil
 	s.closeChan <- struct{}{}
@@ -350,7 +351,10 @@ func (s *Mux) Close() (err error) {
 	// while target host close socket without finish steps, conn.Close method maybe blocked
 	// and tcp status change to CLOSE WAIT or TIME WAIT, so we close it in other goroutine
 	_ = s.conn.SetDeadline(time.Now().Add(time.Second * 5))
-	go s.conn.Close()
+	go func() {
+		s.conn.Close()
+		s.bw.Close()
+	}()
 	s.release()
 	return
 }
@@ -378,7 +382,7 @@ func (s *Mux) release() {
 	s.newConnQueue.Stop()
 }
 
-//Get New connId as unique flag
+// Get New connId as unique flag
 func (s *Mux) getId() (id int32) {
 	defer PanicHandler()
 	//Avoid going beyond the scope
@@ -449,6 +453,10 @@ func (Self *bandwidth) Get() (bw float64) {
 		bw = 0
 	}
 	return
+}
+
+func (Self *bandwidth) Close() error {
+	return Self.fd.Close()
 }
 
 const counterBits = 4
