@@ -17,8 +17,8 @@ type conn struct {
 	connStatusOkCh   chan struct{}
 	connStatusFailCh chan struct{}
 	connId           int32
-	isClose          bool
-	closingFlag      bool // closing conn flag
+	isClose          int32
+	closingFlag      int32 // closing conn flag
 	receiveWindow    *receiveWindow
 	sendWindow       *sendWindow
 	once             sync.Once
@@ -41,7 +41,7 @@ func NewConn(connId int32, mux *Mux) *conn {
 
 func (s *conn) Read(buf []byte) (n int, err error) {
 	defer PanicHandler()
-	if s.isClose || buf == nil {
+	if atomic.LoadInt32(&s.isClose) != 0 || buf == nil {
 		return 0, errors.New("the conn has closed")
 	}
 	if len(buf) == 0 {
@@ -54,10 +54,10 @@ func (s *conn) Read(buf []byte) (n int, err error) {
 
 func (s *conn) Write(buf []byte) (n int, err error) {
 	defer PanicHandler()
-	if s.isClose {
+	if atomic.LoadInt32(&s.isClose) != 0 {
 		return 0, errors.New("the conn has closed")
 	}
-	if s.closingFlag {
+	if atomic.LoadInt32(&s.closingFlag) != 0 {
 		return 0, errors.New("io: write on closed conn")
 	}
 	if len(buf) == 0 {
@@ -74,9 +74,9 @@ func (s *conn) Close() (err error) {
 }
 
 func (s *conn) closeProcess() {
-	s.isClose = true
+	atomic.StoreInt32(&s.isClose, 1)
 	s.receiveWindow.mux.connMap.Delete(s.connId)
-	if !s.receiveWindow.mux.IsClose {
+	if atomic.LoadInt32(&s.receiveWindow.mux.IsClose) == 0 {
 		// if server or user close the conn while reading, will Get a io.EOF
 		// and this Close method will be invoke, send this signal to close other side
 		s.receiveWindow.mux.sendInfo(muxConnClose, s.connId, nil)
@@ -123,7 +123,7 @@ type window struct {
 	// wait   maxSize  useless  done
 	// wait zero means false, one means true
 	off       uint32
-	closeOp   bool
+	closeOp   int32 // 改为原子类型
 	closeOpCh chan struct{}
 	mux       *Mux
 }
@@ -161,8 +161,8 @@ func (Self *window) New() {
 
 func (Self *window) CloseWindow() {
 	defer PanicHandler()
-	if !Self.closeOp {
-		Self.closeOp = true
+	if atomic.LoadInt32(&Self.closeOp) == 0 {
+		atomic.StoreInt32(&Self.closeOp, 1)
 		Self.closeOpCh <- struct{}{}
 		Self.closeOpCh <- struct{}{}
 	}
@@ -271,7 +271,7 @@ func (Self *receiveWindow) calcSize() {
 
 func (Self *receiveWindow) Write(buf []byte, l uint16, part bool, id int32) (err error) {
 	defer PanicHandler()
-	if Self.closeOp {
+	if atomic.LoadInt32(&Self.closeOp) != 0 {
 		return errors.New("conn.receiveWindow: write on closed window")
 	}
 	element, err := newListElement(buf, l, part)
@@ -312,7 +312,7 @@ start:
 
 func (Self *receiveWindow) Read(p []byte, id int32) (n int, err error) {
 	defer PanicHandler()
-	if Self.closeOp {
+	if atomic.LoadInt32(&Self.closeOp) != 0 {
 		return 0, io.EOF // receive close signal, returns eof
 	}
 	Self.bw.StartRead()
@@ -329,7 +329,7 @@ copyData:
 		// on the first Read method invoked, Self.off and Self.element.l
 		// both zero value
 		listEle.Put(Self.element)
-		if Self.closeOp {
+		if atomic.LoadInt32(&Self.closeOp) != 0 {
 			return 0, io.EOF
 		}
 		Self.element, err = Self.bufQueue.Pop()
@@ -477,7 +477,7 @@ func (Self *sendWindow) SetSize(currentMaxSizeDone uint64) (closed bool) {
 			closed = true
 		}
 	}()
-	if Self.closeOp {
+	if atomic.LoadInt32(&Self.closeOp) != 0 {
 		close(Self.setSizeCh)
 		return true
 	}
@@ -547,7 +547,7 @@ func (Self *sendWindow) WriteTo() (p []byte, sendSize uint32, part bool, err err
 	defer PanicHandler()
 	// returns buf segments, return only one segments, need a loop outside
 	// until err = io.EOF
-	if Self.closeOp {
+	if atomic.LoadInt32(&Self.closeOp) != 0 {
 		return nil, 0, false, errors.New("conn.writeWindow: window closed")
 	}
 	if Self.off == uint32(len(Self.buf)) {
