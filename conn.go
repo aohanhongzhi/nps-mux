@@ -328,7 +328,7 @@ func (Self *receiveWindow) readFromQueue(p []byte, id int32) (n int, err error) 
 	pOff := 0
 	l := 0
 copyData:
-	if Self.off == uint32(Self.element.L) {
+	if Self.element != nil && Self.off == uint32(Self.element.L) {
 		// on the first Read method invoked, Self.off and Self.element.l
 		// both zero value
 		listEle.Put(Self.element)
@@ -345,20 +345,23 @@ copyData:
 			return             // queue receive stop or time out, break the loop and return
 		}
 	}
-	l = copy(p[pOff:], Self.element.Buf[Self.off:Self.element.L])
-	pOff += l
-	Self.off += uint32(l)
-	n += l
-	l = 0
-	if Self.off == uint32(Self.element.L) {
-		windowBuff.Put(Self.element.Buf)
-		Self.sendStatus(id, Self.element.L)
-		// check the window full status
+	if Self.element != nil {
+		l = copy(p[pOff:], Self.element.Buf[Self.off:Self.element.L])
+		pOff += l
+		Self.off += uint32(l)
+		n += l
+		l = 0
+		if Self.element != nil && Self.off == uint32(Self.element.L) {
+			windowBuff.Put(Self.element.Buf)
+			Self.sendStatus(id, Self.element.L)
+			// check the window full status
+		}
+		if pOff < len(p) && Self.element.Part {
+			// element is a part of the segments, trying to fill up buf p
+			goto copyData
+		}
 	}
-	if pOff < len(p) && Self.element.Part {
-		// element is a part of the segments, trying to fill up buf p
-		goto copyData
-	}
+
 	return // buf p is full or all of segments in buf, return
 }
 

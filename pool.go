@@ -43,8 +43,10 @@ func (Self *windowBufferPool) Get() (buf []byte) {
 
 func (Self *windowBufferPool) Put(x []byte) {
 	defer PanicHandler()
-	//trace(x, "put")
-	Self.pool.Put(x[:poolSizeWindow]) // make buf to full
+	if x != nil {
+		//trace(x, "put")
+		Self.pool.Put(x[:poolSizeWindow]) // make buf to full
+	}
 }
 
 type muxPackagerPool struct {
@@ -97,8 +99,10 @@ func (Self *listElementPool) Get() *listElement {
 
 func (Self *listElementPool) Put(element *listElement) {
 	defer PanicHandler()
-	element.Reset()
-	Self.pool.Put(element)
+	if element != nil {
+		element.Reset()
+		Self.pool.Put(element)
+	}
 }
 
 var (
