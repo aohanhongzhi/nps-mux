@@ -322,6 +322,9 @@ func (Self *receiveWindow) Read(p []byte, id int32) (n int, err error) {
 }
 
 func (Self *receiveWindow) readFromQueue(p []byte, id int32) (n int, err error) {
+	if atomic.LoadInt32(&Self.closeOp) != 0 {
+		return 0, io.EOF
+	}
 	pOff := 0
 	l := 0
 copyData:

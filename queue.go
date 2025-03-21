@@ -40,6 +40,9 @@ func (Self *priorityQueue) Push(packager *muxPackager) {
 }
 
 func (Self *priorityQueue) push(packager *muxPackager) {
+	if atomic.LoadInt32(&Self.stop) != 0 {
+		return
+	}
 	defer PanicHandler()
 	switch packager.flag {
 	case muxPingFlag, muxPingReturn:
