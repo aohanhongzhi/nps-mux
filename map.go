@@ -5,55 +5,38 @@ import (
 )
 
 type connMap struct {
-	cMap map[int32]*conn
+	cMap sync.Map
 	//closeCh chan struct{}
-	sync.RWMutex
 }
 
 func NewConnMap() *connMap {
-	defer PanicHandler()
-	cMap := &connMap{
-		cMap: make(map[int32]*conn),
+	return &connMap{
+		cMap: sync.Map{},
 	}
-	return cMap
-}
-
-func (s *connMap) Size() (n int) {
-	defer PanicHandler()
-	s.RLock()
-	n = len(s.cMap)
-	s.RUnlock()
-	return
 }
 
 func (s *connMap) Get(id int32) (*conn, bool) {
-	defer PanicHandler()
-	s.RLock()
-	v, ok := s.cMap[id]
-	s.RUnlock()
+	v, ok := s.cMap.Load(id)
 	if ok && v != nil {
-		return v, true
+		c, ok1 := v.(*conn)
+		if c != nil && ok1 {
+			return c, true
+		}
 	}
 	return nil, false
 }
 
 func (s *connMap) Set(id int32, v *conn) {
-	defer PanicHandler()
-	s.Lock()
-	s.cMap[id] = v
-	s.Unlock()
+	s.cMap.Store(id, v)
 }
 
 func (s *connMap) Close() {
-	defer PanicHandler()
-	for _, v := range s.cMap {
-		_ = v.Close() // close all the connections in the mux
-	}
+	s.cMap.Range(func(key, value interface{}) bool {
+		_ = value.(*conn).Close()
+		return true
+	})
 }
 
 func (s *connMap) Delete(id int32) {
-	defer PanicHandler()
-	s.Lock()
-	delete(s.cMap, id)
-	s.Unlock()
+	s.cMap.Delete(id)
 }
