@@ -292,7 +292,13 @@ startPop:
 		if element != nil {
 			return
 		}
-		runtime.Gosched() // another goroutine is still pushing
+		select {
+		case <-Self.stopOp:
+			err = io.EOF
+			return
+		default:
+			runtime.Gosched() // another goroutine is still pushing
+		}
 	}
 }
 
