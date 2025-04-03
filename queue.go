@@ -59,10 +59,13 @@ const maxStarving uint8 = 8
 func (Self *priorityQueue) Pop() (packager *muxPackager) {
 	defer PanicHandler()
 	var iter bool
-	for {
+	for i := 0; i < 3; i++ {
 		packager = Self.TryPop()
 		if packager != nil {
 			return
+		} else {
+			// 如果大量 goroutine 卡在空队列，说明清理不彻底。
+			//log.Printf("writeQueue empty, goroutine waiting %p", Self)
 		}
 		if atomic.LoadInt32(&Self.stop) != 0 {
 			return
@@ -154,7 +157,7 @@ func (Self *connQueue) Push(connection *conn) {
 func (Self *connQueue) Pop() (connection *conn) {
 	defer PanicHandler()
 	var iter bool
-	for {
+	for i := 0; i < 3; i++ {
 		connection = Self.TryPop()
 		if connection != nil {
 			return
@@ -355,6 +358,8 @@ func (Self *receiveWindowQueue) Len() (n uint32) {
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
 	n, _ = Self.chain.head.unpack(ptrs)
 	// just for unpack method use
+	//	如果队列始终非空，说明 Push 和 Pop 不平衡。
+	//log.Printf("receiveWindowQueue length: %d -> %p", n, Self) // 添加日志
 	return
 }
 
@@ -362,6 +367,8 @@ func (Self *receiveWindowQueue) Stop() {
 	defer PanicHandler()
 	Self.stopOp <- struct{}{}
 	Self.stopOp <- struct{}{}
+	for Self.TryPop() != nil { // 清空队列
+	}
 }
 
 func (Self *receiveWindowQueue) SetTimeOut(t time.Time) {

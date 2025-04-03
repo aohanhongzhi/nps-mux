@@ -346,6 +346,7 @@ func (s *Mux) Close() (err error) {
 		return errors.New("the mux has closed")
 	}
 	atomic.StoreInt32(&s.IsClose, 1)
+	s.release() // 先释放队列
 	log.Println("close mux ", s.conn.RemoteAddr())
 	s.connMap.Close()
 	//s.connMap = nil
@@ -359,7 +360,6 @@ func (s *Mux) Close() (err error) {
 		s.conn.Close()
 		s.bw.Close()
 	}()
-	s.release()
 	return
 }
 
