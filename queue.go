@@ -514,6 +514,7 @@ type bufChain struct {
 	// by consumers, so reads and writes must be atomic.
 	tail     *bufChainElt
 	newChain uint32
+	mu       sync.Mutex // Add mutex
 }
 
 type bufChainElt struct {
@@ -550,6 +551,8 @@ func (c *bufChain) new(initSize int) {
 }
 
 func (c *bufChain) pushHead(val unsafe.Pointer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 startPush:
 	for {
 		if atomic.LoadUint32(&c.newChain) > 0 {
@@ -586,6 +589,8 @@ startPush:
 }
 
 func (c *bufChain) popTail() (unsafe.Pointer, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	d := loadPoolChainElt(&c.tail)
 	if d == nil {
 		return nil, false
