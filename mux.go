@@ -212,18 +212,18 @@ func (s *Mux) ping() {
 			select {
 			case data = <-s.pingCh:
 				atomic.StoreUint32(&s.pingCheckTime, 0)
+				_ = now.UnmarshalText(data)
+				latency := time.Now().UTC().Sub(now).Seconds()
+				if latency > 0 {
+					atomic.StoreUint64(&s.latency, math.Float64bits(s.counter.Latency(latency)))
+					// convert float64 to bits, store it atomic
+					//log.Println("ping", math.Float64frombits(atomic.LoadUint64(&s.latency)))
+				}
+				//if cap(data) > 0 && atomic.LoadInt32(&s.IsClose) == 0 {
+				//	windowBuff.Put(data)
+				//}
 			case <-s.closeChan:
 				break
-			}
-			_ = now.UnmarshalText(data)
-			latency := time.Now().UTC().Sub(now).Seconds()
-			if latency > 0 {
-				atomic.StoreUint64(&s.latency, math.Float64bits(s.counter.Latency(latency)))
-				// convert float64 to bits, store it atomic
-				//log.Println("ping", math.Float64frombits(atomic.LoadUint64(&s.latency)))
-			}
-			if cap(data) > 0 && atomic.LoadInt32(&s.IsClose) == 0 {
-				windowBuff.Put(data)
 			}
 		}
 	}()
@@ -281,11 +281,20 @@ func (s *Mux) readSession() {
 					s.newConnQueue.Push(connection)
 					continue
 				case muxPingFlag:
-					s.sendInfo(muxPingReturn, muxPing, pack.content)
+					// 复制 content 以避免重用
+					contentCopy := make([]byte, len(pack.content))
+					copy(contentCopy, pack.content)
+					s.sendInfo(muxPingReturn, muxPing, contentCopy)
 					windowBuff.Put(pack.content)
+					muxPack.Put(pack)
 					continue
 				case muxPingReturn:
-					s.pingCh <- pack.content
+					// 复制 content 以避免重用
+					contentCopy := make([]byte, len(pack.content))
+					copy(contentCopy, pack.content)
+					s.pingCh <- contentCopy
+					windowBuff.Put(pack.content)
+					muxPack.Put(pack)
 					continue
 				}
 
@@ -389,11 +398,22 @@ func (s *Mux) release() {
 // Get New connId as unique flag
 func (s *Mux) getId() (id int32) {
 	defer PanicHandler()
-	//Avoid going beyond the scope
-	if (math.MaxInt32 - s.id) < 10000 {
-		atomic.StoreInt32(&s.id, 0)
+	// 原子读取当前值
+	current := atomic.LoadInt32(&s.id)
+	// 原子化检查并重置
+	if (math.MaxInt32 - current) < 10000 {
+		if atomic.CompareAndSwapInt32(&s.id, current, 0) {
+			current = 0
+		} else {
+			// 如果CAS失败，说明其他goroutine已经修改了值，重试
+			return s.getId()
+		}
 	}
+
+	// 原子递增
 	id = atomic.AddInt32(&s.id, 1)
+
+	// 检查是否已存在
 	if _, ok := s.connMap.Get(id); ok {
 		return s.getId()
 	}
