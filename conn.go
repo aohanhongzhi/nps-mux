@@ -332,7 +332,7 @@ copyData:
 		if atomic.LoadInt32(&Self.closeOp) != 0 {
 			return 0, io.EOF
 		}
-		Self.element, err = Self.bufQueue.Pop()
+		Self.element, err = Self.bufQueue.Pop(&Self.closeOp)
 		// if the queue is empty, Pop method will wait until one element push
 		// into the queue successful, or timeout.
 		// timer start on timeout parameter is set up

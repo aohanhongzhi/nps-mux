@@ -272,10 +272,14 @@ func (Self *receiveWindowQueue) Push(element *listElement) {
 	return
 }
 
-func (Self *receiveWindowQueue) Pop() (element *listElement, err error) {
+func (Self *receiveWindowQueue) Pop(closeTag *int32) (element *listElement, err error) {
 	defer PanicHandler()
 	var length uint32
 startPop:
+	//	 这里极端情况下存在死循环
+	if atomic.LoadInt32(closeTag) != 0 {
+		return nil, io.EOF
+	}
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
 	length, _ = Self.chain.head.unpack(ptrs)
 	if length == 0 {
