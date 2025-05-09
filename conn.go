@@ -25,6 +25,7 @@ type conn struct {
 }
 
 func NewConn(connId int32, mux *Mux) *conn {
+	defer PanicHandler()
 	c := &conn{
 		connStatusOkCh:   make(chan struct{}),
 		connStatusFailCh: make(chan struct{}),
@@ -39,6 +40,7 @@ func NewConn(connId int32, mux *Mux) *conn {
 }
 
 func (s *conn) Read(buf []byte) (n int, err error) {
+	defer PanicHandler()
 	if s.isClose || buf == nil {
 		return 0, errors.New("the conn has closed")
 	}
@@ -51,6 +53,7 @@ func (s *conn) Read(buf []byte) (n int, err error) {
 }
 
 func (s *conn) Write(buf []byte) (n int, err error) {
+	defer PanicHandler()
 	if s.isClose {
 		return 0, errors.New("the conn has closed")
 	}
@@ -65,6 +68,7 @@ func (s *conn) Write(buf []byte) (n int, err error) {
 }
 
 func (s *conn) Close() (err error) {
+	defer PanicHandler()
 	s.once.Do(s.closeProcess)
 	return
 }
@@ -83,25 +87,30 @@ func (s *conn) closeProcess() {
 }
 
 func (s *conn) LocalAddr() net.Addr {
+	defer PanicHandler()
 	return s.receiveWindow.mux.conn.LocalAddr()
 }
 
 func (s *conn) RemoteAddr() net.Addr {
+	defer PanicHandler()
 	return s.receiveWindow.mux.conn.RemoteAddr()
 }
 
 func (s *conn) SetDeadline(t time.Time) error {
+	defer PanicHandler()
 	_ = s.SetReadDeadline(t)
 	_ = s.SetWriteDeadline(t)
 	return nil
 }
 
 func (s *conn) SetReadDeadline(t time.Time) error {
+	defer PanicHandler()
 	s.receiveWindow.SetTimeOut(t)
 	return nil
 }
 
 func (s *conn) SetWriteDeadline(t time.Time) error {
+	defer PanicHandler()
 	s.sendWindow.SetTimeOut(t)
 	return nil
 }
@@ -146,10 +155,12 @@ func (Self *window) pack(maxSize, done uint32, wait bool) uint64 {
 }
 
 func (Self *window) New() {
+	defer PanicHandler()
 	Self.closeOpCh = make(chan struct{}, 2)
 }
 
 func (Self *window) CloseWindow() {
+	defer PanicHandler()
 	if !Self.closeOp {
 		Self.closeOp = true
 		Self.closeOpCh <- struct{}{}
@@ -169,6 +180,7 @@ type receiveWindow struct {
 }
 
 func (Self *receiveWindow) New(mux *Mux) {
+	defer PanicHandler()
 	// initial a window for receive
 	Self.bufQueue = newReceiveWindowQueue()
 	Self.element = listEle.Get()
@@ -258,6 +270,7 @@ func (Self *receiveWindow) calcSize() {
 }
 
 func (Self *receiveWindow) Write(buf []byte, l uint16, part bool, id int32) (err error) {
+	defer PanicHandler()
 	if Self.closeOp {
 		return errors.New("conn.receiveWindow: write on closed window")
 	}
@@ -298,6 +311,7 @@ start:
 }
 
 func (Self *receiveWindow) Read(p []byte, id int32) (n int, err error) {
+	defer PanicHandler()
 	if Self.closeOp {
 		return 0, io.EOF // receive close signal, returns eof
 	}
@@ -385,16 +399,19 @@ func (Self *receiveWindow) sendStatus(id int32, l uint16) {
 }
 
 func (Self *receiveWindow) SetTimeOut(t time.Time) {
+	defer PanicHandler()
 	// waiting for FIFO queue Pop method
 	Self.bufQueue.SetTimeOut(t)
 }
 
 func (Self *receiveWindow) Stop() {
+	defer PanicHandler()
 	// queue has no more data to push, so unblock pop method
 	Self.once.Do(Self.bufQueue.Stop)
 }
 
 func (Self *receiveWindow) CloseWindow() {
+	defer PanicHandler()
 	Self.window.CloseWindow()
 	Self.Stop()
 	Self.release()
@@ -430,6 +447,7 @@ type sendWindow struct {
 }
 
 func (Self *sendWindow) New(mux *Mux) {
+	defer PanicHandler()
 	Self.setSizeCh = make(chan struct{})
 	Self.maxSizeDone = Self.pack(maximumSegmentSize*30, 0, false)
 	Self.mux = mux
@@ -437,6 +455,7 @@ func (Self *sendWindow) New(mux *Mux) {
 }
 
 func (Self *sendWindow) SetSendBuf(buf []byte) {
+	defer PanicHandler()
 	// send window buff from conn write method, set it to send window
 	Self.buf = buf
 	Self.off = 0
@@ -451,6 +470,7 @@ func (Self *sendWindow) remainingSize(maxSize, send uint32) uint32 {
 }
 
 func (Self *sendWindow) SetSize(currentMaxSizeDone uint64) (closed bool) {
+	defer PanicHandler()
 	// set the window size from receive window
 	defer func() {
 		if recover() != nil {
@@ -524,6 +544,7 @@ func (Self *sendWindow) sent(sentSize uint32) {
 }
 
 func (Self *sendWindow) WriteTo() (p []byte, sendSize uint32, part bool, err error) {
+	defer PanicHandler()
 	// returns buf segments, return only one segments, need a loop outside
 	// until err = io.EOF
 	if Self.closeOp {
@@ -600,6 +621,7 @@ func (Self *sendWindow) waitReceiveWindow() (err error) {
 }
 
 func (Self *sendWindow) WriteFull(buf []byte, id int32) (n int, err error) {
+	defer PanicHandler()
 	Self.SetSendBuf(buf) // set the buf to send window
 	var bufSeg []byte
 	var part bool
@@ -628,6 +650,7 @@ func (Self *sendWindow) WriteFull(buf []byte, id int32) (n int, err error) {
 }
 
 func (Self *sendWindow) SetTimeOut(t time.Time) {
+	defer PanicHandler()
 	// waiting for receive a receive window size
 	Self.timeout = t
 }
@@ -647,6 +670,7 @@ func newWriteBandwidth() *writeBandwidth {
 }
 
 func (Self *writeBandwidth) StartRead() {
+	defer PanicHandler()
 	if Self.readEnd.IsZero() {
 		Self.readEnd = time.Now()
 	}
@@ -657,6 +681,7 @@ func (Self *writeBandwidth) StartRead() {
 }
 
 func (Self *writeBandwidth) SetCopySize(n uint16) {
+	defer PanicHandler()
 	Self.bufLength += uint32(n)
 	Self.endRead()
 }
@@ -672,6 +697,7 @@ func (Self *writeBandwidth) calcBandWidth() {
 }
 
 func (Self *writeBandwidth) Get() (bw float64) {
+	defer PanicHandler()
 	// The zero value, 0 for numeric types
 	bw = math.Float64frombits(atomic.LoadUint64(&Self.writeBW))
 	if bw <= 0 {
@@ -681,5 +707,6 @@ func (Self *writeBandwidth) Get() (bw float64) {
 }
 
 func (Self *writeBandwidth) GrowRatio() {
+	defer PanicHandler()
 	atomic.AddUint32(&Self.ratio, 1)
 }
