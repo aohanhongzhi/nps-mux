@@ -148,26 +148,24 @@ func (s *Mux) writeSession() {
 		defer PanicHandler()
 		// 具备一直执行的条件，会死循环导致CPU暴增
 		for {
-			if atomic.LoadInt32(&s.IsClose) != 0 {
-				break
-			}
-			pack := s.writeQueue.Pop()
-			if atomic.LoadInt32(&s.IsClose) != 0 {
-				break
-			}
-			//if pack.flag == muxNewMsg || pack.flag == muxNewMsgPart {
-			//	if pack.length >= 100 {
-			//		log.Println("write session id", pack.id, "\n", string(pack.content[:100]))
-			//	} else {
-			//		log.Println("write session id", pack.id, "\n", string(pack.content[:pack.length]))
-			//	}
-			//}
-			err := pack.Pack(s.conn)
-			muxPack.Put(pack)
-			if err != nil {
-				log.Println("mux: Pack err", err)
-				_ = s.Close()
-				break
+			select {
+			case <-s.closeChan:
+				return
+			default:
+				if atomic.LoadInt32(&s.IsClose) != 0 {
+					return
+				}
+				pack := s.writeQueue.Pop()
+				if pack == nil {
+					continue
+				}
+				err := pack.Pack(s.conn)
+				muxPack.Put(pack)
+				if err != nil {
+					log.Println("mux: Pack err", err)
+					_ = s.Close()
+					return
+				}
 			}
 		}
 	}()
@@ -214,18 +212,18 @@ func (s *Mux) ping() {
 			select {
 			case data = <-s.pingCh:
 				atomic.StoreUint32(&s.pingCheckTime, 0)
+				_ = now.UnmarshalText(data)
+				latency := time.Now().UTC().Sub(now).Seconds()
+				if latency > 0 {
+					atomic.StoreUint64(&s.latency, math.Float64bits(s.counter.Latency(latency)))
+					// convert float64 to bits, store it atomic
+					//log.Println("ping", math.Float64frombits(atomic.LoadUint64(&s.latency)))
+				}
+				//if cap(data) > 0 && atomic.LoadInt32(&s.IsClose) == 0 {
+				//	windowBuff.Put(data)
+				//}
 			case <-s.closeChan:
 				break
-			}
-			_ = now.UnmarshalText(data)
-			latency := time.Now().UTC().Sub(now).Seconds()
-			if latency > 0 {
-				atomic.StoreUint64(&s.latency, math.Float64bits(s.counter.Latency(latency)))
-				// convert float64 to bits, store it atomic
-				//log.Println("ping", math.Float64frombits(atomic.LoadUint64(&s.latency)))
-			}
-			if cap(data) > 0 && atomic.LoadInt32(&s.IsClose) == 0 {
-				windowBuff.Put(data)
 			}
 		}
 	}()
@@ -235,18 +233,22 @@ func (s *Mux) readSession() {
 	defer PanicHandler()
 	go func() {
 		defer PanicHandler()
-		var connection *conn
 		for {
-			if atomic.LoadInt32(&s.IsClose) != 0 {
-				break
+			select {
+			case <-s.closeChan:
+				return
+			default:
+				if atomic.LoadInt32(&s.IsClose) != 0 {
+					return
+				}
+				connection := s.newConnQueue.Pop()
+				if connection == nil {
+					continue // 避免死循环
+				}
+				s.connMap.Set(connection.connId, connection)
+				s.newConnCh <- connection
+				s.sendInfo(muxNewConnOk, connection.connId, nil)
 			}
-			connection = s.newConnQueue.Pop()
-			if atomic.LoadInt32(&s.IsClose) != 0 {
-				break // make sure that is closed
-			}
-			s.connMap.Set(connection.connId, connection) //it has been Set before send ok
-			s.newConnCh <- connection
-			s.sendInfo(muxNewConnOk, connection.connId, nil)
 		}
 	}()
 	go func() {
@@ -255,68 +257,78 @@ func (s *Mux) readSession() {
 		var l uint16
 		var err error
 		for {
-			if atomic.LoadInt32(&s.IsClose) != 0 {
+			select {
+			case <-s.closeChan:
 				return
-			}
-			pack = muxPack.Get()
-			s.bw.StartRead()
-			if l, err = pack.UnPack(s.conn); err != nil {
-				//  2025/03/16 11:41:17 mux: read session unpack from connection err read tcp 127.0.0.1:8024->127.0.0.1:53754: read: connection reset by peer
-				//log.Println("mux: read session unpack from connection err", err)
-				_ = s.Close()
-				break
-			}
-			s.bw.SetCopySize(l)
-			//if pack.flag == muxNewMsg || pack.flag == muxNewMsgPart {
-			//	if pack.length >= 100 {
-			//		log.Printf("read session id %d pointer %p\n%v", pack.id, pack.content, string(pack.content[:100]))
-			//	} else {
-			//		log.Printf("read session id %d pointer %p\n%v", pack.id, pack.content, string(pack.content[:pack.length]))
-			//	}
-			//}
-			switch pack.flag {
-			case muxNewConn: //New connection
-				connection := NewConn(pack.id, s)
-				s.newConnQueue.Push(connection)
-				continue
-			case muxPingFlag: //ping
-				s.sendInfo(muxPingReturn, muxPing, pack.content)
-				windowBuff.Put(pack.content)
-				continue
-			case muxPingReturn:
-				s.pingCh <- pack.content
-				continue
-			}
-			if connection, ok := s.connMap.Get(pack.id); ok && atomic.LoadInt32(&connection.isClose) == 0 {
+			default:
+				if atomic.LoadInt32(&s.IsClose) != 0 {
+					return
+				}
+				pack = muxPack.Get()
+				s.bw.StartRead()
+				l, err = pack.UnPack(s.conn)
+				if err != nil {
+					log.Println("mux: read session unpack from connection err", err)
+					muxPack.Put(pack)
+					_ = s.Close()
+					return
+				}
+				s.bw.SetCopySize(l)
+
 				switch pack.flag {
-				case muxNewMsg, muxNewMsgPart: //New msg from remote connection
-					err = s.newMsg(connection, pack)
-					if err != nil {
-						log.Println("mux: read session connection New msg err", err)
-						_ = connection.Close()
-					}
+				case muxNewConn:
+					connection := NewConn(pack.id, s)
+					s.newConnQueue.Push(connection)
 					continue
-				case muxNewConnOk: //connection ok
-					connection.connStatusOkCh <- struct{}{}
+				case muxPingFlag:
+					// 复制 content 以避免重用
+					contentCopy := make([]byte, len(pack.content))
+					copy(contentCopy, pack.content)
+					s.sendInfo(muxPingReturn, muxPing, contentCopy)
+					windowBuff.Put(pack.content)
+					muxPack.Put(pack)
 					continue
-				case muxNewConnFail:
-					connection.connStatusFailCh <- struct{}{}
-					continue
-				case muxMsgSendOk:
-					if atomic.LoadInt32(&connection.isClose) != 0 {
-						continue
-					}
-					connection.sendWindow.SetSize(pack.window)
-					continue
-				case muxConnClose: //close the connection
-					atomic.StoreInt32(&connection.closingFlag, 1)
-					connection.receiveWindow.Stop() // close signal to receive window
+				case muxPingReturn:
+					// 复制 content 以避免重用
+					contentCopy := make([]byte, len(pack.content))
+					copy(contentCopy, pack.content)
+					s.pingCh <- contentCopy
+					windowBuff.Put(pack.content)
+					muxPack.Put(pack)
 					continue
 				}
-			} else if pack.flag == muxConnClose {
-				continue
+
+				if connection, ok := s.connMap.Get(pack.id); ok && atomic.LoadInt32(&connection.isClose) == 0 {
+					switch pack.flag {
+					case muxNewMsg, muxNewMsgPart:
+						err = s.newMsg(connection, pack)
+						if err != nil {
+							log.Println("mux: read session connection new msg err", err)
+							_ = connection.Close()
+						}
+						continue
+					case muxNewConnOk:
+						connection.connStatusOkCh <- struct{}{}
+						continue
+					case muxNewConnFail:
+						connection.connStatusFailCh <- struct{}{}
+						continue
+					case muxMsgSendOk:
+						if atomic.LoadInt32(&connection.isClose) != 0 {
+							continue
+						}
+						connection.sendWindow.SetSize(pack.window)
+						continue
+					case muxConnClose:
+						atomic.StoreInt32(&connection.closingFlag, 1)
+						connection.receiveWindow.Stop()
+						continue
+					}
+				} else if pack.flag == muxConnClose {
+					continue
+				}
+				muxPack.Put(pack)
 			}
-			muxPack.Put(pack)
 		}
 	}()
 }
@@ -343,6 +355,7 @@ func (s *Mux) Close() (err error) {
 		return errors.New("the mux has closed")
 	}
 	atomic.StoreInt32(&s.IsClose, 1)
+	s.release() // 先释放队列
 	log.Println("close mux ", s.conn.RemoteAddr())
 	s.connMap.Close()
 	//s.connMap = nil
@@ -356,7 +369,6 @@ func (s *Mux) Close() (err error) {
 		s.conn.Close()
 		s.bw.Close()
 	}()
-	s.release()
 	return
 }
 
@@ -386,11 +398,22 @@ func (s *Mux) release() {
 // Get New connId as unique flag
 func (s *Mux) getId() (id int32) {
 	defer PanicHandler()
-	//Avoid going beyond the scope
-	if (math.MaxInt32 - s.id) < 10000 {
-		atomic.StoreInt32(&s.id, 0)
+	// 原子读取当前值
+	current := atomic.LoadInt32(&s.id)
+	// 原子化检查并重置
+	if (math.MaxInt32 - current) < 10000 {
+		if atomic.CompareAndSwapInt32(&s.id, current, 0) {
+			current = 0
+		} else {
+			// 如果CAS失败，说明其他goroutine已经修改了值，重试
+			return s.getId()
+		}
 	}
+
+	// 原子递增
 	id = atomic.AddInt32(&s.id, 1)
+
+	// 检查是否已存在
 	if _, ok := s.connMap.Get(id); ok {
 		return s.getId()
 	}
