@@ -16,7 +16,7 @@ type priorityQueue struct {
 	middleChain  *bufChain
 	lowestChain  *bufChain
 	starving     uint8
-	stop         bool
+	stop         int32 // 改为原子类型
 	cond         *sync.Cond
 }
 
@@ -64,7 +64,7 @@ func (Self *priorityQueue) Pop() (packager *muxPackager) {
 		if packager != nil {
 			return
 		}
-		if Self.stop {
+		if atomic.LoadInt32(&Self.stop) != 0 {
 			return
 		}
 		if iter {
@@ -76,13 +76,14 @@ func (Self *priorityQueue) Pop() (packager *muxPackager) {
 	}
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
-	for packager = Self.TryPop(); packager == nil; {
-		if Self.stop {
+	for {
+		if packager = Self.TryPop(); packager != nil {
 			return
 		}
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
+			return nil
+		}
 		Self.cond.Wait()
-		// wait for it with no more iter
-		packager = Self.TryPop()
 	}
 	return
 }
@@ -124,14 +125,14 @@ func (Self *priorityQueue) TryPop() (packager *muxPackager) {
 
 func (Self *priorityQueue) Stop() {
 	defer PanicHandler()
-	Self.stop = true
+	atomic.StoreInt32(&Self.stop, 1) // ✅ 原子写操作
 	Self.cond.Broadcast()
 }
 
 type connQueue struct {
 	chain    *bufChain
 	starving uint8
-	stop     bool
+	stop     int32 // 改为原子类型
 	cond     *sync.Cond
 }
 
@@ -158,7 +159,7 @@ func (Self *connQueue) Pop() (connection *conn) {
 		if connection != nil {
 			return
 		}
-		if Self.stop {
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
 			return
 		}
 		if iter {
@@ -171,7 +172,7 @@ func (Self *connQueue) Pop() (connection *conn) {
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
 	for connection = Self.TryPop(); connection == nil; {
-		if Self.stop {
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
 			return
 		}
 		Self.cond.Wait()
@@ -193,7 +194,7 @@ func (Self *connQueue) TryPop() (connection *conn) {
 
 func (Self *connQueue) Stop() {
 	defer PanicHandler()
-	Self.stop = true
+	atomic.StoreInt32(&Self.stop, 1) // ✅ 原子写操作
 	Self.cond.Broadcast()
 }
 
@@ -269,6 +270,7 @@ func (Self *receiveWindowQueue) Push(element *listElement) {
 }
 
 func (Self *receiveWindowQueue) Pop() (element *listElement, err error) {
+	defer PanicHandler()
 	var length uint32
 startPop:
 	ptrs := atomic.LoadUint64(&Self.lengthWait)

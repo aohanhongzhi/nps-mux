@@ -35,7 +35,7 @@ type Mux struct {
 	newConnCh          chan *conn
 	id                 int32
 	closeChan          chan struct{}
-	IsClose            bool
+	IsClose            int32 // 改为原子类型
 	counter            *latencyCounter
 	bw                 *bandwidth
 	pingCh             chan []byte
@@ -71,7 +71,7 @@ func NewMux(c net.Conn, connType string, pingCheckThreshold int) *Mux {
 		closeChan:          make(chan struct{}, 1),
 		newConnCh:          make(chan *conn),
 		bw:                 NewBandwidth(fd),
-		IsClose:            false,
+		IsClose:            0,
 		connType:           connType,
 		pingCh:             make(chan []byte),
 		pingCheckThreshold: checkThreshold,
@@ -89,7 +89,7 @@ func NewMux(c net.Conn, connType string, pingCheckThreshold int) *Mux {
 
 func (s *Mux) NewConn() (*conn, error) {
 	defer PanicHandler()
-	if s.IsClose {
+	if atomic.LoadInt32(&s.IsClose) != 0 {
 		return nil, errors.New("the mux has closed")
 	}
 	conn := NewConn(s.getId(), s)
@@ -109,7 +109,7 @@ func (s *Mux) NewConn() (*conn, error) {
 
 func (s *Mux) Accept() (net.Conn, error) {
 	defer PanicHandler()
-	if s.IsClose {
+	if atomic.LoadInt32(&s.IsClose) != 0 {
 		return nil, errors.New("accept error,the mux has closed")
 	}
 	conn := <-s.newConnCh
@@ -126,7 +126,7 @@ func (s *Mux) Addr() net.Addr {
 
 func (s *Mux) sendInfo(flag uint8, id int32, data interface{}) {
 	defer PanicHandler()
-	if s.IsClose {
+	if atomic.LoadInt32(&s.IsClose) != 0 {
 		return
 	}
 	var err error
@@ -148,11 +148,11 @@ func (s *Mux) writeSession() {
 		defer PanicHandler()
 		// 具备一直执行的条件，会死循环导致CPU暴增
 		for {
-			if s.IsClose {
+			if atomic.LoadInt32(&s.IsClose) != 0 {
 				break
 			}
 			pack := s.writeQueue.Pop()
-			if s.IsClose {
+			if atomic.LoadInt32(&s.IsClose) != 0 {
 				break
 			}
 			//if pack.flag == muxNewMsg || pack.flag == muxNewMsgPart {
@@ -183,7 +183,7 @@ func (s *Mux) ping() {
 		ticker := time.NewTicker(time.Second * 5)
 		defer ticker.Stop()
 		for {
-			if s.IsClose {
+			if atomic.LoadInt32(&s.IsClose) != 0 {
 				break
 			}
 			select {
@@ -208,7 +208,7 @@ func (s *Mux) ping() {
 		var now time.Time
 		var data []byte
 		for {
-			if s.IsClose {
+			if atomic.LoadInt32(&s.IsClose) != 0 {
 				break
 			}
 			select {
@@ -224,7 +224,7 @@ func (s *Mux) ping() {
 				// convert float64 to bits, store it atomic
 				//log.Println("ping", math.Float64frombits(atomic.LoadUint64(&s.latency)))
 			}
-			if cap(data) > 0 && !s.IsClose {
+			if cap(data) > 0 && atomic.LoadInt32(&s.IsClose) == 0 {
 				windowBuff.Put(data)
 			}
 		}
@@ -237,11 +237,11 @@ func (s *Mux) readSession() {
 		defer PanicHandler()
 		var connection *conn
 		for {
-			if s.IsClose {
+			if atomic.LoadInt32(&s.IsClose) != 0 {
 				break
 			}
 			connection = s.newConnQueue.Pop()
-			if s.IsClose {
+			if atomic.LoadInt32(&s.IsClose) != 0 {
 				break // make sure that is closed
 			}
 			s.connMap.Set(connection.connId, connection) //it has been Set before send ok
@@ -255,7 +255,7 @@ func (s *Mux) readSession() {
 		var l uint16
 		var err error
 		for {
-			if s.IsClose {
+			if atomic.LoadInt32(&s.IsClose) != 0 {
 				return
 			}
 			pack = muxPack.Get()
@@ -287,7 +287,7 @@ func (s *Mux) readSession() {
 				s.pingCh <- pack.content
 				continue
 			}
-			if connection, ok := s.connMap.Get(pack.id); ok && !connection.isClose {
+			if connection, ok := s.connMap.Get(pack.id); ok && atomic.LoadInt32(&connection.isClose) == 0 {
 				switch pack.flag {
 				case muxNewMsg, muxNewMsgPart: //New msg from remote connection
 					err = s.newMsg(connection, pack)
@@ -303,13 +303,13 @@ func (s *Mux) readSession() {
 					connection.connStatusFailCh <- struct{}{}
 					continue
 				case muxMsgSendOk:
-					if connection.isClose {
+					if atomic.LoadInt32(&connection.isClose) != 0 {
 						continue
 					}
 					connection.sendWindow.SetSize(pack.window)
 					continue
 				case muxConnClose: //close the connection
-					connection.closingFlag = true
+					atomic.StoreInt32(&connection.closingFlag, 1)
 					connection.receiveWindow.Stop() // close signal to receive window
 					continue
 				}
@@ -323,7 +323,7 @@ func (s *Mux) readSession() {
 
 func (s *Mux) newMsg(connection *conn, pack *muxPackager) (err error) {
 	defer PanicHandler()
-	if connection.isClose {
+	if atomic.LoadInt32(&connection.isClose) != 0 {
 		err = io.ErrClosedPipe
 		return
 	}
@@ -339,11 +339,11 @@ func (s *Mux) newMsg(connection *conn, pack *muxPackager) (err error) {
 
 func (s *Mux) Close() (err error) {
 	defer PanicHandler()
-	if s.IsClose {
+	if atomic.LoadInt32(&s.IsClose) != 0 {
 		return errors.New("the mux has closed")
 	}
-	s.IsClose = true
-	//log.Println("close mux")
+	atomic.StoreInt32(&s.IsClose, 1)
+	log.Println("close mux ", s.conn.RemoteAddr())
 	s.connMap.Close()
 	//s.connMap = nil
 	s.closeChan <- struct{}{}
@@ -352,6 +352,7 @@ func (s *Mux) Close() (err error) {
 	// and tcp status change to CLOSE WAIT or TIME WAIT, so we close it in other goroutine
 	_ = s.conn.SetDeadline(time.Now().Add(time.Second * 5))
 	go func() {
+		defer PanicHandler()
 		s.conn.Close()
 		s.bw.Close()
 	}()
@@ -456,6 +457,7 @@ func (Self *bandwidth) Get() (bw float64) {
 }
 
 func (Self *bandwidth) Close() error {
+	defer PanicHandler()
 	return Self.fd.Close()
 }
 
