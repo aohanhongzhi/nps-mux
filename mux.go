@@ -245,7 +245,10 @@ func (s *Mux) readSession() {
 				break // make sure that is closed
 			}
 			s.connMap.Set(connection.connId, connection) //it has been Set before send ok
-			s.newConnCh <- connection
+			// safe send to avoid panic when channel already closed
+			if !s.trySendNewConn(connection) {
+				break
+			}
 			s.sendInfo(muxNewConnOk, connection.connId, nil)
 		}
 	}()
@@ -319,6 +322,18 @@ func (s *Mux) readSession() {
 			muxPack.Put(pack)
 		}
 	}()
+}
+
+// trySendNewConn 尝试向 newConnCh 发送，若通道已关闭则返回 false，避免 panic
+func (s *Mux) trySendNewConn(c *conn) (ok bool) {
+	ok = true
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	s.newConnCh <- c
+	return
 }
 
 func (s *Mux) newMsg(connection *conn, pack *muxPackager) (err error) {
