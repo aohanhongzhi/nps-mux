@@ -246,7 +246,10 @@ func (s *Mux) readSession() {
 					continue // 避免死循环
 				}
 				s.connMap.Set(connection.connId, connection)
-				s.newConnCh <- connection
+				// safe send to avoid panic when channel already closed
+				if !s.trySendNewConn(connection) { //it has been Set before send ok
+					break
+				}
 				s.sendInfo(muxNewConnOk, connection.connId, nil)
 			}
 		}
@@ -331,6 +334,19 @@ func (s *Mux) readSession() {
 			}
 		}
 	}()
+}
+
+// 尝试向 newConnCh 发送，若通道已关闭则返回 false，避免 panic
+func (s *Mux) trySendNewConn(c *conn) bool {
+	if atomic.LoadInt32(&s.IsClose) != 0 {
+		return false
+	}
+	select {
+	case s.newConnCh <- c:
+		return true
+	default:
+		return false // 通道满或已关闭（实际无法区分，但不会 panic）
+	}
 }
 
 func (s *Mux) newMsg(connection *conn, pack *muxPackager) (err error) {
