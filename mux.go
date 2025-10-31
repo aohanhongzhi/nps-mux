@@ -325,15 +325,16 @@ func (s *Mux) readSession() {
 }
 
 // trySendNewConn 尝试向 newConnCh 发送，若通道已关闭则返回 false，避免 panic
-func (s *Mux) trySendNewConn(c *conn) (ok bool) {
-	ok = true
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	s.newConnCh <- c
-	return
+func (s *Mux) trySendNewConn(c *conn) bool {
+	if atomic.LoadInt32(&s.IsClose) != 0 {
+		return false
+	}
+	select {
+	case s.newConnCh <- c:
+		return true
+	default:
+		return false // 通道满或已关闭（实际无法区分，但不会 panic）
+	}
 }
 
 func (s *Mux) newMsg(connection *conn, pack *muxPackager) (err error) {
