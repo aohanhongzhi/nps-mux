@@ -41,6 +41,11 @@ git tag v0.0.6
 git push --tags 
 ```
 
+本地删除
+```shell
+git tag -d v0.0.32
+```
+
 # 调试
 
 ```shell
