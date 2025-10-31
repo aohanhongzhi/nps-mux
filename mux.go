@@ -139,7 +139,6 @@ func (s *Mux) sendInfo(flag uint8, id int32, data interface{}) {
 		return
 	}
 	s.writeQueue.Push(pack)
-	return
 }
 
 func (s *Mux) writeSession() {
@@ -173,6 +172,7 @@ func (s *Mux) writeSession() {
 
 func (s *Mux) ping() {
 	defer PanicHandler()
+	// 发送 ping包，和检查超时机制
 	go func() {
 		defer PanicHandler()
 		now, _ := time.Now().UTC().MarshalText()
@@ -188,7 +188,7 @@ func (s *Mux) ping() {
 			case <-ticker.C:
 			}
 			if atomic.LoadUint32(&s.pingCheckTime) > s.pingCheckThreshold {
-				log.Println("mux: ping time out, checktime", s.pingCheckTime, "threshold", s.pingCheckThreshold)
+				log.Println("mux: ping time out and close the mux, checktime", s.pingCheckTime, "threshold", s.pingCheckThreshold)
 				_ = s.Close()
 				// more than limit times not receive the ping return package,
 				// mux conn is damaged, maybe a packet drop, close it
@@ -196,23 +196,27 @@ func (s *Mux) ping() {
 			}
 			now, _ = time.Now().UTC().MarshalText()
 			s.sendInfo(muxPingFlag, muxPing, now)
-			atomic.AddUint32(&s.pingCheckTime, 1)
+			atomic.AddUint32(&s.pingCheckTime, 1) // 次数加1,连续超过阈值就close了，说明长时间未响应
 		}
-		return
 	}()
 
+	// 接收ping响应
 	go func() {
 		defer PanicHandler()
 		var now time.Time
 		var data []byte
+	pingLoop:
 		for {
 			if atomic.LoadInt32(&s.IsClose) != 0 {
 				break
 			}
 			select {
-			case data = <-s.pingCh:
-				atomic.StoreUint32(&s.pingCheckTime, 0)
-				_ = now.UnmarshalText(data)
+			case data = <-s.pingCh: // channel处理连接返回的ping包响应
+				atomic.StoreUint32(&s.pingCheckTime, 0) // 响应成功就重置这个计数器
+				err := now.UnmarshalText(data)
+				if err != nil {
+					log.Println("mux: ping response Unmarshal err", err)
+				}
 				latency := time.Now().UTC().Sub(now).Seconds()
 				if latency > 0 {
 					atomic.StoreUint64(&s.latency, math.Float64bits(s.counter.Latency(latency)))
@@ -223,7 +227,7 @@ func (s *Mux) ping() {
 				//	windowBuff.Put(data)
 				//}
 			case <-s.closeChan:
-				break
+				break pingLoop
 			}
 		}
 	}()
