@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -134,8 +135,7 @@ func (s *Mux) sendInfo(flag uint8, id int32, data interface{}) {
 	err = pack.Set(flag, id, data)
 	if err != nil {
 		muxPack.Put(pack)
-		log.Println("mux: New Pack err", err)
-		_ = s.Close()
+		_ = s.closeWithReason("encode_error", err)
 		return
 	}
 	s.writeQueue.Push(pack)
@@ -161,8 +161,7 @@ func (s *Mux) writeSession() {
 				err := pack.Pack(s.conn)
 				muxPack.Put(pack)
 				if err != nil {
-					log.Println("mux: Pack err", err)
-					_ = s.Close()
+					_ = s.closeWithReason("write_error", err)
 					return
 				}
 			}
@@ -188,8 +187,7 @@ func (s *Mux) ping() {
 			case <-ticker.C:
 			}
 			if atomic.LoadUint32(&s.pingCheckTime) > s.pingCheckThreshold {
-				log.Println("mux: ping time out and close the mux, checktime", s.pingCheckTime, "threshold", s.pingCheckThreshold)
-				_ = s.Close()
+				_ = s.closeWithReason("ping_timeout", nil)
 				// more than limit times not receive the ping return package,
 				// mux conn is damaged, maybe a packet drop, close it
 				break
@@ -275,9 +273,8 @@ func (s *Mux) readSession() {
 				s.bw.StartRead()
 				l, err = pack.UnPack(s.conn)
 				if err != nil {
-					log.Println("mux: read session unpack from connection err", err)
 					muxPack.Put(pack)
-					_ = s.Close()
+					_ = s.closeWithReason("read_error", err)
 					return
 				}
 				s.bw.SetCopySize(l)
@@ -369,14 +366,35 @@ func (s *Mux) newMsg(connection *conn, pack *muxPackager) (err error) {
 	return
 }
 
-func (s *Mux) Close() (err error) {
+func (s *Mux) Close() error {
+	return s.closeWithReason("local_close", nil)
+}
+
+func closeErrorKind(err error) string {
+	if err == nil {
+		return "none"
+	}
+	if errors.Is(err, io.EOF) {
+		return "eof"
+	}
+	if errors.Is(err, syscall.ECONNRESET) {
+		return "tcp_reset"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+	return "other"
+}
+
+// Record only the first close trigger; subsequent socket errors are consequences.
+func (s *Mux) closeWithReason(reason string, cause error) (err error) {
 	defer PanicHandler()
-	if atomic.LoadInt32(&s.IsClose) != 0 {
+	if !atomic.CompareAndSwapInt32(&s.IsClose, 0, 1) {
 		return errors.New("the mux has closed")
 	}
-	atomic.StoreInt32(&s.IsClose, 1)
+	log.Printf("mux_closed local=%s remote=%s transport=%s reason=%s error_kind=%s missed_pings=%d threshold=%d err=%v", s.conn.LocalAddr(), s.conn.RemoteAddr(), s.connType, reason, closeErrorKind(cause), atomic.LoadUint32(&s.pingCheckTime), s.pingCheckThreshold, cause)
 	s.release() // 先释放队列
-	log.Println("close mux ", s.conn.RemoteAddr())
 	s.connMap.Close()
 	//s.connMap = nil
 	s.closeChan <- struct{}{}
