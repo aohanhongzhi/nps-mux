@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -32,7 +33,7 @@ type Mux struct {
 	latency uint64 // we store latency in bits, but it's float64
 	net.Listener
 	conn               net.Conn
-	connMap            *connMap
+	connMap            sync.Map
 	newConnCh          chan *conn
 	id                 int32
 	closeChan          chan struct{}
@@ -67,7 +68,6 @@ func NewMux(c net.Conn, connType string, pingCheckThreshold int) *Mux {
 	}
 	m := &Mux{
 		conn:               c,
-		connMap:            NewConnMap(),
 		id:                 0,
 		closeChan:          make(chan struct{}, 1),
 		newConnCh:          make(chan *conn),
@@ -94,8 +94,8 @@ func (s *Mux) NewConn() (*conn, error) {
 		return nil, errors.New("the mux has closed")
 	}
 	conn := NewConn(s.getId(), s)
-	//it must be Set before send
-	s.connMap.Set(conn.connId, conn)
+	// Store the connection before sending.
+	s.connMap.Store(conn.connId, conn)
 	s.sendInfo(muxNewConn, conn.connId, nil)
 	//Set a timer timeout 120 second
 	timer := time.NewTimer(time.Minute * 2)
@@ -247,7 +247,7 @@ func (s *Mux) readSession() {
 				if connection == nil {
 					continue // 避免死循环
 				}
-				s.connMap.Set(connection.connId, connection)
+				s.connMap.Store(connection.connId, connection)
 				// safe send to avoid panic when channel already closed
 				if !s.trySendNewConn(connection) { //it has been Set before send ok
 					break
@@ -302,7 +302,8 @@ func (s *Mux) readSession() {
 					continue
 				}
 
-				if connection, ok := s.connMap.Get(pack.id); ok && atomic.LoadInt32(&connection.isClose) == 0 {
+				value, _ := s.connMap.Load(pack.id)
+				if connection, ok := value.(*conn); ok && connection != nil && atomic.LoadInt32(&connection.isClose) == 0 {
 					switch pack.flag {
 					case muxNewMsg, muxNewMsgPart:
 						err = s.newMsg(connection, pack)
@@ -395,8 +396,10 @@ func (s *Mux) closeWithReason(reason string, cause error) (err error) {
 	}
 	log.Printf("mux_closed local=%s remote=%s transport=%s reason=%s error_kind=%s missed_pings=%d threshold=%d err=%v", s.conn.LocalAddr(), s.conn.RemoteAddr(), s.connType, reason, closeErrorKind(cause), atomic.LoadUint32(&s.pingCheckTime), s.pingCheckThreshold, cause)
 	s.release() // 先释放队列
-	s.connMap.Close()
-	//s.connMap = nil
+	s.connMap.Range(func(key, value interface{}) bool {
+		_ = value.(*conn).Close()
+		return true
+	})
 	s.closeChan <- struct{}{}
 	close(s.newConnCh)
 	// while target host close socket without finish steps, conn.Close method maybe blocked
@@ -452,7 +455,7 @@ func (s *Mux) getId() (id int32) {
 	id = atomic.AddInt32(&s.id, 1)
 
 	// 检查是否已存在
-	if _, ok := s.connMap.Get(id); ok {
+	if _, ok := s.connMap.Load(id); ok {
 		return s.getId()
 	}
 	return
