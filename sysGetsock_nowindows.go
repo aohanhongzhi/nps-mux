@@ -1,3 +1,4 @@
+//go:build !windows
 // +build !windows
 
 package nps_mux
@@ -9,11 +10,23 @@ import (
 )
 
 func sysGetSock(fd *os.File) (bufferSize int, err error) {
-	if fd != nil {
-		return syscall.GetsockoptInt(int(fd.Fd()), syscall.SOL_SOCKET, syscall.SO_RCVBUF)
-	} else {
+	if fd == nil {
 		return 5 * 1024 * 1024, nil
 	}
+	raw, err := fd.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	// Control holds a descriptor reference until getsockopt returns, preventing
+	// concurrent Close from destroying or recycling the descriptor mid-query.
+	var socketErr error
+	err = raw.Control(func(socket uintptr) {
+		bufferSize, socketErr = syscall.GetsockoptInt(int(socket), syscall.SOL_SOCKET, syscall.SO_RCVBUF)
+	})
+	if err != nil {
+		return 0, err
+	}
+	return bufferSize, socketErr
 }
 
 func getConnFd(c net.Conn) (fd *os.File, err error) {
