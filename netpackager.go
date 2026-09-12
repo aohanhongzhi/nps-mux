@@ -19,6 +19,7 @@ type basePackager struct {
 }
 
 func (Self *basePackager) Set(content []byte) (err error) {
+	defer PanicHandler()
 	Self.reset()
 	if content != nil {
 		n := len(content)
@@ -39,6 +40,7 @@ func (Self *basePackager) Set(content []byte) (err error) {
 }
 
 func (Self *basePackager) Pack(writer io.Writer) (err error) {
+	defer PanicHandler()
 	binary.LittleEndian.PutUint16(Self.buf[5:7], Self.length)
 	_, err = writer.Write(Self.buf[:7])
 	if err != nil {
@@ -49,6 +51,7 @@ func (Self *basePackager) Pack(writer io.Writer) (err error) {
 }
 
 func (Self *basePackager) UnPack(reader io.Reader) (n uint16, err error) {
+	defer PanicHandler()
 	Self.reset()
 	l, err := io.ReadFull(reader, Self.buf[5:7])
 	if err != nil {
@@ -88,6 +91,7 @@ type muxPackager struct {
 }
 
 func (Self *muxPackager) Set(flag uint8, id int32, content interface{}) (err error) {
+	defer PanicHandler()
 	Self.buf = windowBuff.Get()
 	Self.flag = flag
 	Self.id = id
@@ -103,6 +107,7 @@ func (Self *muxPackager) Set(flag uint8, id int32, content interface{}) (err err
 }
 
 func (Self *muxPackager) Pack(writer io.Writer) (err error) {
+	defer PanicHandler()
 	Self.buf = Self.buf[0:13]
 	Self.buf[0] = byte(Self.flag)
 	binary.LittleEndian.PutUint32(Self.buf[1:5], uint32(Self.id))
@@ -121,6 +126,7 @@ func (Self *muxPackager) Pack(writer io.Writer) (err error) {
 }
 
 func (Self *muxPackager) UnPack(reader io.Reader) (n uint16, err error) {
+	defer PanicHandler()
 	Self.buf = windowBuff.Get()
 	Self.buf = Self.buf[0:13]
 	l, err := io.ReadFull(reader, Self.buf[:5])

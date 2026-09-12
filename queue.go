@@ -16,11 +16,12 @@ type priorityQueue struct {
 	middleChain  *bufChain
 	lowestChain  *bufChain
 	starving     uint8
-	stop         bool
+	stop         int32 // 改为原子类型
 	cond         *sync.Cond
 }
 
 func (Self *priorityQueue) New() {
+	defer PanicHandler()
 	Self.highestChain = new(bufChain)
 	Self.highestChain.new(4)
 	Self.middleChain = new(bufChain)
@@ -32,12 +33,14 @@ func (Self *priorityQueue) New() {
 }
 
 func (Self *priorityQueue) Push(packager *muxPackager) {
+	defer PanicHandler()
 	Self.push(packager)
 	Self.cond.Broadcast()
 	return
 }
 
 func (Self *priorityQueue) push(packager *muxPackager) {
+	defer PanicHandler()
 	switch packager.flag {
 	case muxPingFlag, muxPingReturn:
 		Self.highestChain.pushHead(unsafe.Pointer(packager))
@@ -54,13 +57,17 @@ func (Self *priorityQueue) push(packager *muxPackager) {
 const maxStarving uint8 = 8
 
 func (Self *priorityQueue) Pop() (packager *muxPackager) {
+	defer PanicHandler()
 	var iter bool
-	for {
+	for i := 0; i < 3; i++ {
 		packager = Self.TryPop()
 		if packager != nil {
 			return
+		} else {
+			// 如果大量 goroutine 卡在空队列，说明清理不彻底。
+			//log.Printf("writeQueue empty, goroutine waiting %p", Self)
 		}
-		if Self.stop {
+		if atomic.LoadInt32(&Self.stop) != 0 {
 			return
 		}
 		if iter {
@@ -72,18 +79,20 @@ func (Self *priorityQueue) Pop() (packager *muxPackager) {
 	}
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
-	for packager = Self.TryPop(); packager == nil; {
-		if Self.stop {
+	for {
+		if packager = Self.TryPop(); packager != nil {
 			return
 		}
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
+			return nil
+		}
 		Self.cond.Wait()
-		// wait for it with no more iter
-		packager = Self.TryPop()
 	}
 	return
 }
 
 func (Self *priorityQueue) TryPop() (packager *muxPackager) {
+	defer PanicHandler()
 	ptr, ok := Self.highestChain.popTail()
 	if ok {
 		packager = (*muxPackager)(ptr)
@@ -118,18 +127,20 @@ func (Self *priorityQueue) TryPop() (packager *muxPackager) {
 }
 
 func (Self *priorityQueue) Stop() {
-	Self.stop = true
+	defer PanicHandler()
+	atomic.StoreInt32(&Self.stop, 1) // ✅ 原子写操作
 	Self.cond.Broadcast()
 }
 
 type connQueue struct {
 	chain    *bufChain
 	starving uint8
-	stop     bool
+	stop     int32 // 改为原子类型
 	cond     *sync.Cond
 }
 
 func (Self *connQueue) New() {
+	defer PanicHandler()
 	Self.chain = new(bufChain)
 	Self.chain.new(32)
 	locker := new(sync.Mutex)
@@ -137,19 +148,21 @@ func (Self *connQueue) New() {
 }
 
 func (Self *connQueue) Push(connection *conn) {
+	defer PanicHandler()
 	Self.chain.pushHead(unsafe.Pointer(connection))
 	Self.cond.Broadcast()
 	return
 }
 
 func (Self *connQueue) Pop() (connection *conn) {
+	defer PanicHandler()
 	var iter bool
-	for {
+	for i := 0; i < 3; i++ {
 		connection = Self.TryPop()
 		if connection != nil {
 			return
 		}
-		if Self.stop {
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
 			return
 		}
 		if iter {
@@ -162,7 +175,7 @@ func (Self *connQueue) Pop() (connection *conn) {
 	Self.cond.L.Lock()
 	defer Self.cond.L.Unlock()
 	for connection = Self.TryPop(); connection == nil; {
-		if Self.stop {
+		if atomic.LoadInt32(&Self.stop) != 0 { // ✅ 原子读操作
 			return
 		}
 		Self.cond.Wait()
@@ -173,6 +186,7 @@ func (Self *connQueue) Pop() (connection *conn) {
 }
 
 func (Self *connQueue) TryPop() (connection *conn) {
+	defer PanicHandler()
 	ptr, ok := Self.chain.popTail()
 	if ok {
 		connection = (*conn)(ptr)
@@ -182,7 +196,8 @@ func (Self *connQueue) TryPop() (connection *conn) {
 }
 
 func (Self *connQueue) Stop() {
-	Self.stop = true
+	defer PanicHandler()
+	atomic.StoreInt32(&Self.stop, 1) // ✅ 原子写操作
 	Self.cond.Broadcast()
 }
 
@@ -193,12 +208,14 @@ type listElement struct {
 }
 
 func (Self *listElement) Reset() {
+	defer PanicHandler()
 	Self.L = 0
 	Self.Buf = nil
 	Self.Part = false
 }
 
 func newListElement(buf []byte, l uint16, part bool) (element *listElement, err error) {
+	defer PanicHandler()
 	if uint16(len(buf)) != l {
 		err = errors.New("listElement: buf length not match")
 		return
@@ -226,6 +243,7 @@ type receiveWindowQueue struct {
 }
 
 func newReceiveWindowQueue() *receiveWindowQueue {
+	defer PanicHandler()
 	queue := receiveWindowQueue{
 		chain:  new(bufChain),
 		stopOp: make(chan struct{}, 2),
@@ -236,6 +254,7 @@ func newReceiveWindowQueue() *receiveWindowQueue {
 }
 
 func (Self *receiveWindowQueue) Push(element *listElement) {
+	defer PanicHandler()
 	var length, wait uint32
 	for {
 		ptrs := atomic.LoadUint64(&Self.lengthWait)
@@ -253,9 +272,14 @@ func (Self *receiveWindowQueue) Push(element *listElement) {
 	return
 }
 
-func (Self *receiveWindowQueue) Pop() (element *listElement, err error) {
+func (Self *receiveWindowQueue) Pop(closeTag *int32) (element *listElement, err error) {
+	defer PanicHandler()
 	var length uint32
 startPop:
+	//	 这里极端情况下存在死循环
+	if atomic.LoadInt32(closeTag) != 0 {
+		return nil, io.EOF
+	}
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
 	length, _ = Self.chain.head.unpack(ptrs)
 	if length == 0 {
@@ -275,11 +299,18 @@ startPop:
 		if element != nil {
 			return
 		}
-		runtime.Gosched() // another goroutine is still pushing
+		select {
+		case <-Self.stopOp:
+			err = io.EOF
+			return
+		default:
+			runtime.Gosched() // another goroutine is still pushing
+		}
 	}
 }
 
 func (Self *receiveWindowQueue) TryPop() (element *listElement) {
+	defer PanicHandler()
 	ptr, ok := Self.chain.popTail()
 	if ok {
 		element = (*listElement)(ptr)
@@ -290,6 +321,7 @@ func (Self *receiveWindowQueue) TryPop() (element *listElement) {
 }
 
 func (Self *receiveWindowQueue) allowPop() (closed bool) {
+	defer PanicHandler()
 	select {
 	case Self.readOp <- struct{}{}:
 		return false
@@ -299,6 +331,7 @@ func (Self *receiveWindowQueue) allowPop() (closed bool) {
 }
 
 func (Self *receiveWindowQueue) waitPush() (err error) {
+	defer PanicHandler()
 	t := Self.timeout.Sub(time.Now())
 	if t <= 0 {
 		// not Set the timeout, so wait for it without timeout, just like a tcp connection
@@ -325,18 +358,25 @@ func (Self *receiveWindowQueue) waitPush() (err error) {
 }
 
 func (Self *receiveWindowQueue) Len() (n uint32) {
+	defer PanicHandler()
 	ptrs := atomic.LoadUint64(&Self.lengthWait)
 	n, _ = Self.chain.head.unpack(ptrs)
 	// just for unpack method use
+	//	如果队列始终非空，说明 Push 和 Pop 不平衡。
+	//log.Printf("receiveWindowQueue length: %d -> %p", n, Self) // 添加日志
 	return
 }
 
 func (Self *receiveWindowQueue) Stop() {
+	defer PanicHandler()
 	Self.stopOp <- struct{}{}
 	Self.stopOp <- struct{}{}
+	for Self.TryPop() != nil { // 清空队列
+	}
 }
 
 func (Self *receiveWindowQueue) SetTimeOut(t time.Time) {
+	defer PanicHandler()
 	Self.timeout = t
 }
 
@@ -478,6 +518,7 @@ type bufChain struct {
 	// by consumers, so reads and writes must be atomic.
 	tail     *bufChainElt
 	newChain uint32
+	mu       sync.Mutex // Add mutex
 }
 
 type bufChainElt struct {
@@ -514,6 +555,8 @@ func (c *bufChain) new(initSize int) {
 }
 
 func (c *bufChain) pushHead(val unsafe.Pointer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 startPush:
 	for {
 		if atomic.LoadUint32(&c.newChain) > 0 {
@@ -550,6 +593,8 @@ startPush:
 }
 
 func (c *bufChain) popTail() (unsafe.Pointer, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	d := loadPoolChainElt(&c.tail)
 	if d == nil {
 		return nil, false

@@ -21,7 +21,7 @@ type TrafficControl struct {
 }
 
 func Ips() (map[string]string, error) {
-
+	defer PanicHandler()
 	ips := make(map[string]string)
 
 	interfaces, err := net.Interfaces()
@@ -46,6 +46,7 @@ func Ips() (map[string]string, error) {
 
 // get ip and Eth information by Eth name
 func GetEthByIp(ipAddr string) (eth *Eth, err error) {
+	defer PanicHandler()
 	var interfaces []net.Interface
 	interfaces, err = net.Interfaces()
 	if err != nil {
@@ -97,6 +98,7 @@ func getArrayExhaustivity(arr []tcFunc) (result [][]tcFunc) {
 }
 
 func NewTrafficControl(ipAddr string) (*TrafficControl, error) {
+	defer PanicHandler()
 	Eth, err := GetEthByIp(ipAddr)
 	if err != nil {
 		return nil, err
@@ -109,6 +111,7 @@ func NewTrafficControl(ipAddr string) (*TrafficControl, error) {
 
 // test the network randomly
 func (tc *TrafficControl) RunNetRangeTest(f func()) error {
+	defer PanicHandler()
 	funcs := tc.getTestVariable()
 	groups := getArrayExhaustivity(funcs)
 	for _, v := range groups {
